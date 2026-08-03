@@ -1,27 +1,23 @@
 <div align="center">
-  <img src="vidhya.png" alt="Vidhya Bot Platform" width="180"/>
+  <img src="vidhya.png" alt="Vidhya Bot Platform" width="320"/>
 
-  <h1>Vidhya Bot Platform</h1>
+  <h1>Vidhya AI Bot Platform</h1>
 
-  <p><strong>A production-grade, multi-channel AI educational assistant</strong><br/>
-  Built on FastAPI · pgvector · Mistral AI · Telegram · React · Celery · Docker</p>
+  <p><strong>A production-grade AI educational assistant with document-grounded answers</strong><br/>
+  Built on FastAPI · pgvector · Mistral AI · React · Celery · Docker</p>
 
   <p>
-    <a href="#-architecture"><img src="https://img.shields.io/badge/Architecture-N--Tier-6C63FF?style=for-the-badge" alt="Architecture"/></a>
-    <a href="#-beyond-rag"><img src="https://img.shields.io/badge/RAG-Context--Aware-00C896?style=for-the-badge" alt="RAG"/></a>
-    <a href="#-quick-start"><img src="https://img.shields.io/badge/Docker-One--Command_Setup-0db7ed?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License"/></a>
+    <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
+    <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white"/>
+    <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black"/>
+    <img src="https://img.shields.io/badge/PostgreSQL-pgvector-316192?style=for-the-badge&logo=postgresql&logoColor=white"/>
   </p>
-
   <p>
-    <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white"/>
-    <img src="https://img.shields.io/badge/FastAPI-async-009688?style=flat-square&logo=fastapi&logoColor=white"/>
-    <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black"/>
-    <img src="https://img.shields.io/badge/PostgreSQL-pgvector-316192?style=flat-square&logo=postgresql&logoColor=white"/>
-    <img src="https://img.shields.io/badge/Redis-sliding--window-DD0031?style=flat-square&logo=redis&logoColor=white"/>
-    <img src="https://img.shields.io/badge/Celery-async_tasks-37814A?style=flat-square"/>
-    <img src="https://img.shields.io/badge/Mistral_AI-embeddings_%26_chat-FF6B35?style=flat-square"/>
-    <img src="https://img.shields.io/badge/Telegram-Bot_%26_WebApp-26A5E4?style=flat-square&logo=telegram&logoColor=white"/>
+    <img src="https://img.shields.io/badge/Redis-DD0031?style=for-the-badge&logo=redis&logoColor=white"/>
+    <img src="https://img.shields.io/badge/Docker-0db7ed?style=for-the-badge&logo=docker&logoColor=white"/>
+    <img src="https://img.shields.io/badge/Celery-37814A?style=for-the-badge&logo=celery&logoColor=white"/>
+    <img src="https://img.shields.io/badge/Mistral_AI-FF6B35?style=for-the-badge"/>
+    <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge"/>
   </p>
 </div>
 
@@ -29,7 +25,7 @@
 
 ## What is Vidhya?
 
-Vidhya is an **AI-powered educational assistant** that lets institutions or creators build a Telegram bot and web app where users can **ask questions grounded in your own documents** — PDFs, course material, knowledge bases — rather than relying on hallucinated general knowledge.
+Vidhya is an **AI-powered educational assistant** that lets institutions or creators build a web app where users can **ask questions grounded in your own documents** — PDFs, course material, knowledge bases — rather than relying on hallucinated general knowledge.
 
 Think of it as your own private, subscription-gated **ChatGPT for your content**, running entirely on your infrastructure.
 
@@ -37,7 +33,7 @@ Think of it as your own private, subscription-gated **ChatGPT for your content**
 
 - It reads and understands **your specific documents**, not the open internet
 - It runs a full **subscription and payments engine** (PhonePe), so you can monetize it
-- It works on **Telegram** (bot + mini web app) and a standalone **React web dashboard**
+- It comes with a standalone **React web dashboard** for both users and admins
 - Every component is **Dockerized, async, production-hardened**, and ready to deploy on a ₹500/month VPS
 
 ---
@@ -46,36 +42,18 @@ Think of it as your own private, subscription-gated **ChatGPT for your content**
 
 Vidhya is built as a strict **5-layer N-Tier system**, designed so that each layer can scale independently.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    PRESENTATION LAYER                        │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────┐  │
-│  │  Telegram Bot   │  │ Telegram WebApp  │  │  React    │  │
-│  │   (Aiogram)     │  │  (Mini App)      │  │  Admin    │  │
-│  └────────┬────────┘  └────────┬─────────┘  └─────┬─────┘  │
-└───────────┼────────────────────┼─────────────────┼─────────┘
-            │         HTTPS / SSE streaming         │
-┌───────────┼────────────────────┼─────────────────┼─────────┐
-│           │         API LAYER (FastAPI)            │         │
-│        REST endpoints · SSE streaming · Middleware │         │
-│   CSRF · Rate Limiting · Session Auth · IP Proxy   │         │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-┌───────────────────────────┼─────────────────────────────────┐
-│              SERVICE LAYER (Business Logic)                  │
-│  AI + RAG Orchestrator · Subscription Engine · Quota Engine  │
-│  Auth (Telegram WebApp HMAC) · Payment HMAC Verification     │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-            ┌───────────────┴───────────────┐
-            │                               │
-┌───────────┴──────────┐      ┌─────────────┴──────────────┐
-│  BACKGROUND WORKERS  │      │       DATA LAYER            │
-│  (Celery + Redis)    │      │  PostgreSQL + pgvector      │
-│  PDF chunking        │      │  Redis (cache + queues)     │
-│  Conversation AI     │      │  MinIO (S3 object store)   │
-│  Email notifications │      │  Mistral AI (embeddings)   │
-└──────────────────────┘      └────────────────────────────┘
+```mermaid
+graph TD
+    A["🌐 React Web App\n(User + Admin Dashboard)"] --> C
+    B["🤖 Telegram Bot\n(Aiogram 3.x)"] --> C
+
+    C["⚡ FastAPI — API Layer\nREST · SSE Streaming · Middleware\nCSRF · Rate Limiting · Session Auth"]
+
+    C --> D["🧠 Service Layer\nAI + RAG Orchestrator\nSubscription Engine · Quota Engine\nPayment HMAC Verification"]
+
+    D --> E["🗄️ Data Layer\nPostgreSQL + pgvector\nRedis — Cache & Queues\nMinIO — S3 Object Store"]
+
+    D --> F["⚙️ Background Workers\nCelery + Redis\nPDF Chunking & Embedding\nQuota Reset · Subscription Expiry"]
 ```
 
 ---
@@ -114,7 +92,7 @@ for msg in reversed(history_messages):
 Vector search runs directly in PostgreSQL using the **pgvector extension** — no Pinecone, no Weaviate, no Qdrant. This keeps the stack simple, consistent, and transactional.
 
 ```sql
--- Equivalent of what happens: cosine distance <=> operator
+-- Cosine distance <=> operator in pgvector
 SELECT chunk, (embedding <=> query_embedding) AS distance
 FROM document_chunks
 JOIN documents ON documents.id = document_chunks.document_id
@@ -159,7 +137,6 @@ Security wasn't bolted on afterwards — it was designed in from the start.
 | **Password Hashing** | Argon2id via `argon2-cffi` |
 | **Admin 2FA** | TOTP (RFC 6238) via `pyotp` |
 | **CSRF Protection** | Double-submit cookie pattern, custom middleware |
-| **Telegram Auth** | HMAC-SHA256 signature + `auth_date` expiry (replay prevention) |
 | **Payment Webhooks** | PhonePe X-VERIFY SHA256 HMAC validation |
 | **Rate Limiting** | Redis sliding-window per IP/user, bypasses proxy spoofing |
 | **Session Management** | Redis-backed sessions, configurable expiry |
@@ -171,7 +148,7 @@ Security wasn't bolted on afterwards — it was designed in from the start.
 
 ## 🔄 Real-Time Streaming
 
-AI responses don't wait for the full answer — they **stream token-by-token** using **Server-Sent Events (SSE)**. The Telegram bot updates its message in-place as tokens arrive. The React frontend renders progressively. The user sees the AI "thinking" in real time.
+AI responses don't wait for the full answer — they **stream token-by-token** using **Server-Sent Events (SSE)**. The React frontend renders progressively. The user sees the AI "thinking" in real time.
 
 This is powered by FastAPI's `StreamingResponse` + an async generator that reads the Mistral streaming API and converts each token into an SSE event frame.
 
@@ -193,7 +170,6 @@ A complete billing system is built in — not mocked, not TODOs.
 - Subscriptions expire at 23:59:59 IST on the final day
 - Payment processed via **PhonePe** (UPI, cards, wallets)
 - Webhook-validated payment confirmation before plan activation
-- Users notified via Telegram message when subscription expires
 
 ---
 
@@ -202,14 +178,13 @@ A complete billing system is built in — not mocked, not TODOs.
 ### Prerequisites
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) with Compose v2
 - ~2 GB free RAM (runs comfortably on a 2 GB VPS)
-- A Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
 - A Mistral AI API key (from [console.mistral.ai](https://console.mistral.ai))
 
 ### 1. Clone & Configure
 
 ```bash
-git clone https://github.com/your-username/vidhya.git
-cd vidhya
+git clone https://github.com/anjan-budige/vidhya-ai.git
+cd vidhya-ai
 
 # Copy the template and fill in your values
 cp .env.example .env
@@ -219,7 +194,6 @@ nano .env   # or open with your editor
 The minimum required keys to fill in:
 
 ```env
-TELEGRAM_BOT_TOKEN=   # From @BotFather
 MISTRAL_API_KEY=      # From console.mistral.ai
 POSTGRES_PASSWORD=    # Any strong password
 MINIO_ROOT_PASSWORD=  # Any strong password
@@ -234,12 +208,12 @@ ADMIN_DEFAULT_PASSWORD= # Your admin panel password
 docker compose up -d
 ```
 
-This starts 10 services: PostgreSQL, Redis, MinIO, backend API, Celery worker, Celery beat, Flower, Telegram bot, React frontend, and Nginx — all wired together.
+This starts 10 services: PostgreSQL, Redis, MinIO, backend API, Celery worker, Celery beat, Flower, React frontend, and Nginx — all wired together automatically.
 
 ### 3. Verify Health
 
 ```bash
-docker compose ps          # All containers should show "healthy" or "running"
+docker compose ps               # All containers should show "healthy" or "running"
 docker compose logs -f backend  # Watch startup logs
 ```
 
@@ -251,14 +225,13 @@ docker compose logs -f backend  # Watch startup logs
 | **API Docs** | http://localhost/docs | FastAPI Swagger UI |
 | **Celery Monitor** | http://localhost:5555 | Flower task dashboard |
 | **MinIO Console** | http://localhost:9001 | S3 object storage UI |
-| **Telegram Bot** | Telegram app | Search for your bot by username |
 
 ---
 
 ## 📦 Project Structure
 
 ```
-vidhya/
+vidhya-ai/
 ├── backend/                    # FastAPI application (Python 3.12)
 │   ├── app/
 │   │   ├── config.py           # Pydantic-settings configuration
@@ -272,20 +245,16 @@ vidhya/
 │   │   │   ├── plan.py         # Subscription plan definitions
 │   │   │   ├── subscription.py
 │   │   │   ├── payment.py
-│   │   │   ├── session.py
-│   │   │   ├── ai_query.py     # Performance audit log
-│   │   │   └── ...
+│   │   │   └── ai_query.py     # Performance audit log
 │   │   ├── routers/            # API route handlers (12 routers)
-│   │   │   ├── auth.py         # Telegram WebApp auth + session
+│   │   │   ├── auth.py         # Session auth
 │   │   │   ├── ai.py           # SSE streaming chat endpoint
 │   │   │   ├── documents.py    # PDF upload & status
 │   │   │   ├── payments.py     # PhonePe initiation + webhook
 │   │   │   ├── subscriptions.py
-│   │   │   ├── analytics.py    # Admin analytics (AI-generated summary)
-│   │   │   └── ...
+│   │   │   └── analytics.py    # Admin analytics
 │   │   ├── services/           # Business logic layer
 │   │   │   ├── ai.py           # RAG orchestrator + streaming
-│   │   │   ├── auth.py         # Telegram HMAC verification
 │   │   │   ├── quota.py        # Redis quota engine
 │   │   │   ├── subscription.py # Plan activation + expiry
 │   │   │   └── conversation.py
@@ -295,15 +264,11 @@ vidhya/
 │   │   └── workers/
 │   │       ├── celery_app.py   # Celery application factory
 │   │       ├── pdf_ingest.py   # Async PDF chunking + embedding
-│   │       └── conversation_summarizer.py
+│   │       ├── quota_reset.py  # Daily quota reset
+│   │       └── subscription_expiry.py
 │   └── alembic/                # Database migration scripts
 │
 ├── bot/                        # Telegram Bot (Aiogram 3.x)
-│   ├── main.py                 # Polling entrypoint
-│   ├── handlers.py             # Command & message handlers
-│   ├── keyboards.py            # Inline keyboard layouts
-│   ├── auth_middleware.py      # Telegram HMAC session auth
-│   └── api_client.py           # Async HTTP client to backend
 │
 ├── frontend/                   # React + Vite + TypeScript
 │   └── src/
@@ -315,11 +280,10 @@ vidhya/
 │
 ├── infrastructure/
 │   ├── nginx/                  # Reverse proxy configuration
-│   └── postgres/               # DB initialization scripts (pgvector setup)
+│   └── postgres/               # DB init scripts (pgvector setup)
 │
 ├── docker-compose.yml          # Full 10-service orchestration
-├── .env.example                # Configuration template
-└── SECURITY.md                 # Vulnerability reporting policy
+└── .env.example                # Configuration template
 ```
 
 ---
@@ -333,9 +297,8 @@ vidhya/
 | **pgvector** | Vector similarity search inside Postgres — no separate vector DB to manage |
 | **Mistral AI** | Superior embedding quality per token; `mistral-small` is fast and cheap |
 | **Celery + Redis** | Proven, battle-tested async task queue; Redis doubles as rate-limit store |
-| **Aiogram 3.x** | Modern async Telegram bot framework with FSM support |
 | **MinIO** | Self-hosted S3-compatible object storage; zero egress costs |
-| **React + Vite** | Fast builds, TypeScript, Telegram WebApp SDK integration |
+| **React + Vite** | Fast builds, TypeScript |
 | **Argon2id** | Winner of Password Hashing Competition; resistant to GPU/ASIC attacks |
 | **Docker Compose** | Reproducible, single-command deployments across any Linux host |
 
@@ -352,7 +315,7 @@ docker compose logs -f backend
 docker compose logs -f worker
 
 # Rebuild after code changes
-docker compose up -d --build backend bot
+docker compose up -d --build backend
 
 # Run database migrations
 docker compose exec backend alembic upgrade head
@@ -387,7 +350,6 @@ docker compose down -v
 
 - [ ] Multi-language support (Hindi, Kannada, Telugu)
 - [ ] OpenAI / Ollama as alternative LLM backends
-- [ ] Voice message support in Telegram bot
 - [ ] Document versioning (upload newer versions, preserve embeddings)
 - [ ] Razorpay as alternative payment gateway
 - [ ] Admin analytics export (CSV / PDF)
@@ -403,11 +365,8 @@ Contributions are welcome. Please:
 3. Follow existing code patterns (async services, pydantic settings)
 4. Open a Pull Request with a clear description
 
-For security issues, see [SECURITY.md](./SECURITY.md).
-
 ---
 
 <div align="center">
-  <p>Built with ❤️ by <strong>InnovNext</strong></p>
-  <p><i>Questions? Open an issue or reach out on Telegram.</i></p>
+  <p>Built by <strong>Anjan Budige</strong></p>
 </div>
