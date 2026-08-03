@@ -1,0 +1,38 @@
+.git
+.gitignore
+.env
+.env.*
+*.md
+LICENSE
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+
+# Node
+node_modules
+npm-debug.log*
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+
+# IDE
+.vscode
+.idea
+
+# Data volumes
+postgres_data
+redis_data
+ollama_data
+minio_data
+volumes
+
+# Infrastructure (not needed in app images)
+infrastructure
