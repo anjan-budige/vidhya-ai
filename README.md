@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="vidhya.png" alt="Vidhya Bot Platform" width="320"/>
+  <img src="vidhya.png" alt="Vidhya Bot Platform"/>
 
   <h1>Vidhya AI Bot Platform</h1>
 
