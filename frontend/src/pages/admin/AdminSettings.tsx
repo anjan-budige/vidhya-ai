@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { Settings, Save, ShieldCheck, Mail, Smartphone, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api';
+import PlatformModeCard from '../../components/admin/PlatformModeCard';
+import AccessSettingsCard from '../../components/admin/AccessSettingsCard';
+import BotSettingsCard from '../../components/admin/BotSettingsCard';
 
 type Tab = 'general' | 'security';
 
@@ -15,7 +18,6 @@ export default function AdminSettings() {
   const [is2FAEnabled, setIs2FAEnabled] = useState(false);
   const [adminId, setAdminId] = useState<string | null>(null);
 
-  // Password & Email Update State
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -24,7 +26,6 @@ export default function AdminSettings() {
   const [emailLoading, setEmailLoading] = useState(false);
 
   useEffect(() => {
-    // Fetch admin profile to see if 2FA is enabled
     const fetchProfile = async () => {
       try {
         const res = await api.get('/auth/admin/me');
@@ -136,9 +137,13 @@ export default function AdminSettings() {
   return (
     <div className="flex flex-col h-full max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
       <div className="mb-2">
-        <h1 className="text-2xl font-bold text-slate-800">Platform Settings</h1>
-        <p className="text-sm text-slate-500">Configure global application variables and security.</p>
+        <h1 className="text-xl font-semibold text-ink">Platform Settings</h1>
+        <p className="mt-1 text-sm text-muted">Configure global application variables and security.</p>
       </div>
+
+      <PlatformModeCard />
+      <AccessSettingsCard />
+      <BotSettingsCard />
 
       <div className="glass-card overflow-hidden">
         <div className="flex border-b border-slate-100 overflow-x-auto no-scrollbar">
@@ -160,24 +165,6 @@ export default function AdminSettings() {
           {activeTab === 'general' && (
             <form onSubmit={handleSave} className="space-y-8 animate-in slide-in-from-right-4 duration-300">
             
-            {/* Platform Limits */}
-            <div>
-              <h3 className="text-lg font-bold text-slate-800 mb-4">Platform Limits</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Max Upload Size (MB)</label>
-                  <input type="number" defaultValue={100} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Free Tier Token Limit</label>
-                  <input type="number" defaultValue={1000} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500" />
-                </div>
-              </div>
-            </div>
-
-            <hr className="border-slate-100" />
-
-            {/* Support Info & Profile Details */}
             <div>
               <h3 className="text-lg font-bold text-slate-800 mb-4">Account Profile</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

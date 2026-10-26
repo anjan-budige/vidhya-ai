@@ -10,6 +10,7 @@ export default function AdminKnowledgeBase() {
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState('');
+  const [reindex, setReindex] = useState<any>(null);
   
   const fetchDocuments = async (silent = false) => {
     try {
@@ -22,9 +23,21 @@ export default function AdminKnowledgeBase() {
     }
   };
 
+  const fetchReindex = async () => {
+    try {
+      const response = await api.get('/admin/ai/reindex/status');
+      setReindex(response.data);
+    } catch {
+      // Status is informational.
+    }
+  };
+
   useEffect(() => {
     fetchDocuments();
-    
+    fetchReindex();
+
+    const reindexPoll = setInterval(fetchReindex, 5000);
+
     // Auto-poll every 5 seconds if any document is processing
     const interval = setInterval(() => {
       setFiles(currentFiles => {
@@ -36,7 +49,10 @@ export default function AdminKnowledgeBase() {
       });
     }, 5000);
     
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      clearInterval(reindexPoll);
+    };
   }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -54,13 +70,11 @@ export default function AdminKnowledgeBase() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       toast.success('Document uploaded successfully. Processing in background...');
-      // Refresh the list after successful upload
       await fetchDocuments();
     } catch (err) {
       toast.error('Failed to upload document');
     } finally {
       setUploading(false);
-      // Reset input
       if (e.target) e.target.value = '';
     }
   };
@@ -89,7 +103,6 @@ export default function AdminKnowledgeBase() {
       document.body.appendChild(link);
       link.click();
       
-      // Cleanup
       link.parentNode?.removeChild(link);
       window.URL.revokeObjectURL(url);
       
@@ -103,13 +116,60 @@ export default function AdminKnowledgeBase() {
     <div className="flex flex-col h-full max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500">
       <div className="flex items-center justify-between mb-2">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Knowledge Base</h1>
-          <p className="text-sm text-slate-500">Manage RAG documents and platform intelligence</p>
+          <h1 className="text-xl font-semibold text-ink">Knowledge Base</h1>
+          <p className="mt-1 text-sm text-muted">Manage RAG documents and platform intelligence</p>
         </div>
       </div>
 
+      {reindex && reindex.status !== 'idle' && (
+        <div className="card border-2 border-brand-100 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">Re-embedding documents</h2>
+              <p className="text-xs text-muted">
+                {reindex.target_model ? `Model: ${reindex.target_model}` : 'Preparing…'}
+                {' · '}runs automatically in the background
+              </p>
+            </div>
+            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+              reindex.status === 'completed'
+                ? 'bg-success-soft text-success'
+                : reindex.status === 'failed'
+                  ? 'bg-danger-soft text-danger'
+                  : 'bg-warning-soft text-warning'
+            }`}>
+              {reindex.status}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+            <span>
+              {reindex.documents_embedded ?? 0} / {reindex.documents_total ?? 0} documents embedded
+            </span>
+            <span>{reindex.chunks_embedded ?? 0} / {reindex.chunks_total ?? 0} chunks</span>
+            {reindex.failed > 0 && <span className="text-danger">{reindex.failed} failed</span>}
+          </div>
+          {(reindex.documents_total ?? 0) > 0 && (
+            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-canvas">
+              <div
+                className="h-2 rounded-full bg-brand-500 transition-all"
+                style={{
+                  width: `${Math.round(
+                    ((reindex.documents_embedded ?? 0) /
+                      Math.max(1, reindex.documents_total ?? 0)) *
+                      100
+                  )}%`,
+                }}
+              />
+            </div>
+          )}
+          {reindex.error && <p className="mt-2 text-xs text-danger">{reindex.error}</p>}
+          <p className="mt-3 text-[11px] text-muted">
+            Only chunks embedded by the active model are used for document search.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Upload Section */}
         <div className="glass-card p-6 lg:col-span-1 h-fit flex flex-col space-y-4">
           <h2 className="text-lg font-bold text-slate-800 flex items-center">
             <Database className="w-5 h-5 mr-2 text-brand-600" />
@@ -174,7 +234,6 @@ export default function AdminKnowledgeBase() {
           </div>
         </div>
 
-        {/* File List Section */}
         <div className="glass-card p-6 lg:col-span-2">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-lg font-bold text-slate-800">Indexed Documents</h2>

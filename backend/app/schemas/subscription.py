@@ -33,8 +33,8 @@ class SubscriptionWithUsage(SubscriptionResponse):
     daily_messages_limit: int = 5
     monthly_messages_used: int = 0
     monthly_messages_limit: int = 50
-    active_conversations: int = 0
-    max_active_conversations: int = 1
+    sessions_used: int = 0
+    max_sessions: int = 5
     plan_name: str = "free"
     plan_display_name: str = "Free Plan"
 

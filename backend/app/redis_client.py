@@ -1,19 +1,9 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Redis Client Pool                                  ║
-║  Async Redis with connection pooling for sessions, quotas, cache ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import redis.asyncio as aioredis
 
 from app.config import get_settings
 
 settings = get_settings()
 
-# ═══════════════════════════════════════════════════════════════════
-# Redis Client (initialized on import, connected on first use)
-# ═══════════════════════════════════════════════════════════════════
 
 redis_client: aioredis.Redis = aioredis.from_url(
     settings.REDIS_URL,
@@ -23,9 +13,6 @@ redis_client: aioredis.Redis = aioredis.from_url(
 )
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Helper Functions
-# ═══════════════════════════════════════════════════════════════════
 
 async def get_redis() -> aioredis.Redis:
     """
@@ -48,14 +35,10 @@ async def close_redis():
     await redis_client.close()
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Redis Key Builders — centralized key naming
-# ═══════════════════════════════════════════════════════════════════
 
 class RedisKeys:
     """Centralized Redis key patterns. Prevents typos and ensures consistency."""
 
-    # Sessions
     @staticmethod
     def session(session_id: str) -> str:
         return f"session:{session_id}"
@@ -64,12 +47,10 @@ class RedisKeys:
     def admin_session(session_id: str) -> str:
         return f"admin_session:{session_id}"
 
-    # Subscription cache
     @staticmethod
     def subscription_cache(user_id: str) -> str:
         return f"sub_cache:{user_id}"
 
-    # Quota counters
     @staticmethod
     def quota_daily(user_id: str, date_str: str) -> str:
         return f"quota:daily:{user_id}:{date_str}"
@@ -82,7 +63,6 @@ class RedisKeys:
     def tokens_daily(user_id: str, date_str: str) -> str:
         return f"tokens:daily:{user_id}:{date_str}"
 
-    # Conversations
     @staticmethod
     def active_conversations(user_id: str) -> str:
         return f"conv:active:{user_id}"
@@ -91,7 +71,6 @@ class RedisKeys:
     def conversation_activity(conv_id: str) -> str:
         return f"conv:last_activity:{conv_id}"
 
-    # Rate limits
     @staticmethod
     def rate_limit_ai(user_id: str) -> str:
         return f"ratelimit:ai:{user_id}"
@@ -101,15 +80,17 @@ class RedisKeys:
         return f"ratelimit:login:{ip}"
 
     @staticmethod
+    def rate_limit_admin_login(username: str) -> str:
+        return f"ratelimit:adminlogin:{username.lower()}"
+
+    @staticmethod
     def rate_limit_upload(user_id: str) -> str:
         return f"ratelimit:upload:{user_id}"
 
-    # AI cache
     @staticmethod
     def ai_cache(query_hash: str) -> str:
         return f"ai_cache:{query_hash}"
 
-    # Analytics
     @staticmethod
     def analytics_counter(metric: str, date_str: str) -> str:
         return f"analytics:{metric}:{date_str}"

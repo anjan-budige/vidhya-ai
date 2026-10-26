@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 class Session(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "sessions"
 
-    # ── Foreign Keys ──────────────────────────────────────────────
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -30,14 +29,12 @@ class Session(Base, UUIDPrimaryKeyMixin):
         index=True,
     )
 
-    # ── Session Data ──────────────────────────────────────────────
     session_token: Mapped[str] = mapped_column(
         String(255), unique=True, nullable=False, index=True
     )
     device_info: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(INET, nullable=True)
 
-    # ── Status ────────────────────────────────────────────────────
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
@@ -55,7 +52,6 @@ class Session(Base, UUIDPrimaryKeyMixin):
         nullable=False,
     )
 
-    # ── Relationships ─────────────────────────────────────────────
     user: Mapped["User"] = relationship(back_populates="sessions")
 
     def __repr__(self) -> str:

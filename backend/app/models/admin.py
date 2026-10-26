@@ -19,7 +19,6 @@ from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 class Admin(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "admins"
 
-    # ── Credentials ───────────────────────────────────────────────
     username: Mapped[str] = mapped_column(
         String(50), unique=True, nullable=False
     )
@@ -28,12 +27,10 @@ class Admin(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # ── Role ──────────────────────────────────────────────────────
     role: Mapped[str] = mapped_column(
         String(20), default="admin", server_default="admin"
     )  # superadmin | admin | viewer
 
-    # ── TOTP (2FA) ────────────────────────────────────────────────
     totp_secret: Mapped[Optional[str]] = mapped_column(
         String(64), nullable=True
     )
@@ -41,7 +38,6 @@ class Admin(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Boolean, default=False, server_default="false"
     )
 
-    # ── Status ────────────────────────────────────────────────────
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )

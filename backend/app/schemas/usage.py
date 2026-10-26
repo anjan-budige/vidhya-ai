@@ -24,24 +24,20 @@ class UsageResponse(VidhyaBaseModel):
 
 class CurrentUsageResponse(BaseModel):
     """Current usage summary for the user dashboard."""
-    # Daily
     daily_messages_used: int = 0
     daily_messages_limit: int = 5
     daily_tokens_used: int = 0
     daily_reset_at: Optional[datetime] = None
 
-    # Monthly
     monthly_messages_used: int = 0
     monthly_messages_limit: int = 50
     monthly_tokens_used: int = 0
     monthly_reset_at: Optional[datetime] = None
 
-    # Conversations
     active_conversations: int = 0
-    max_active_conversations: int = 1
+    max_sessions: int = 5
     total_conversations: int = 0
 
-    # Plan info
     plan_name: str = "free"
     plan_display_name: str = "Free Plan"
 

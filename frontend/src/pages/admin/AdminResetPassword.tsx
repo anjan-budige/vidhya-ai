@@ -1,134 +1,124 @@
-import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import api from "../../api";
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Lock } from 'lucide-react';
+import api from '../../api';
+import Button from '../../components/ui/Button';
+import Input from '../../components/ui/Input';
+import { LogoStacked } from '../../components/brand/Logo';
 
 export default function AdminResetPassword() {
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [token, setToken] = useState("");
-  
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [token, setToken] = useState('');
+
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    // Extract token from URL query params
     const queryParams = new URLSearchParams(location.search);
-    const tokenParam = queryParams.get("token");
+    const tokenParam = queryParams.get('token');
     if (tokenParam) {
       setToken(tokenParam);
     } else {
-      setError("Invalid or missing reset token.");
+      setError('Invalid or missing reset token.');
     }
   }, [location]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError('Passwords do not match.');
       return;
     }
-    
+
     setLoading(true);
-    setMessage("");
-    setError("");
+    setMessage('');
+    setError('');
 
     try {
-      await api.post("/auth/admin/reset-password", { 
-        token, 
-        new_password: password 
+      await api.post('/auth/admin/reset-password', {
+        token,
+        new_password: password,
       });
-      setMessage("Your password has been successfully reset. 2FA has been disabled.");
-      // Redirect to login after 3 seconds
-      setTimeout(() => {
-        navigate("/admin/login");
-      }, 3000);
+      setMessage('Your password has been reset. Two-factor authentication was disabled.');
+      setTimeout(() => navigate('/admin/login'), 3000);
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to reset password. The token may be expired.");
+      setError(
+        err.response?.data?.detail || 'Failed to reset password. The token may be expired.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4 relative overflow-hidden">
-      {/* Background Orbs */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-600/20 blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-600/20 blur-[120px] pointer-events-none" />
+    <div className="flex min-h-screen items-center justify-center bg-canvas p-6">
+      <div className="w-full max-w-[420px]">
+        <div className="mb-7 flex justify-center">
+          <LogoStacked width={180} />
+        </div>
 
-      <div className="max-w-md w-full relative z-10">
-        <div className="bg-gray-800/50 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2 font-display">Set New Password</h1>
-            <p className="text-gray-400">Please enter your new password below.</p>
+        <div className="card p-8">
+          <div className="mb-6">
+            <h1 className="text-xl font-semibold text-ink">Set a new password</h1>
+            <p className="mt-1 text-sm text-muted">
+              Choose a strong password for your admin account.
+            </p>
           </div>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-4 rounded-xl mb-6 text-sm">
+            <div className="mb-5 rounded-lg border border-red-200 bg-danger-soft p-3 text-sm text-danger">
               {error}
             </div>
           )}
 
           {message ? (
-            <div className="text-center">
-              <div className="bg-green-500/10 border border-green-500/50 text-green-400 p-4 rounded-xl mb-6 text-sm">
+            <div className="space-y-4">
+              <div className="rounded-lg border border-green-200 bg-success-soft p-3 text-sm text-success">
                 {message}
               </div>
-              <p className="text-gray-400 text-sm">Redirecting to login...</p>
+              <p className="text-sm text-muted">Redirecting to login…</p>
+              <Link
+                to="/admin/login"
+                className="inline-flex text-sm font-medium text-brand-500 hover:text-brand-600"
+              >
+                Go to login now
+              </Link>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
-                  New Password
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-gray-900/50 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="••••••••"
-                  minLength={8}
-                />
-              </div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <Input
+                label="New password"
+                id="password"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                icon={<Lock className="h-4 w-4" />}
+              />
 
-              <div>
-                <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-300 mb-2">
-                  Confirm Password
-                </label>
-                <input
-                  id="confirmPassword"
-                  type="password"
-                  required
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full bg-gray-900/50 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="••••••••"
-                  minLength={8}
-                />
-              </div>
+              <Input
+                label="Confirm new password"
+                id="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="••••••••"
+                icon={<Lock className="h-4 w-4" />}
+              />
 
-              <button
-                type="submit"
-                disabled={loading || !token}
-                className="w-full bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white font-medium py-3 px-4 rounded-xl transition-all flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/20"
-              >
-                {loading ? (
-                  <>
-                    <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Resetting...
-                  </>
-                ) : (
-                  "Reset Password"
-                )}
-              </button>
+              <Button type="submit" loading={loading} disabled={!token} className="w-full">
+                Reset password
+              </Button>
             </form>
           )}
         </div>

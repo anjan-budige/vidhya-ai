@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Application Configuration                          ║
-║  All settings loaded from environment variables via pydantic     ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 from functools import lru_cache
 from typing import List
 
@@ -22,19 +15,24 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── App ───────────────────────────────────────────────────────
     ENV: str = "development"
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
     APP_NAME: str = "Vidhya Bot"
     APP_URL: str = "http://localhost"
 
-    # ── Mailtrap ──────────────────────────────────────────────────
-    MAILTRAP_TOKEN: str = ""
-    MAILTRAP_SENDER_EMAIL: str = "hello@example.com"
+    SETTINGS_ENCRYPTION_KEY: str = ""
+    PAYMENTS_ENCRYPTION_KEY: str = ""
+    # Demo checkout is always available outside production; set this to true to
+    # allow it in production for a controlled test (admin must still activate it).
+    PAYMENTS_DEMO_ENABLED: bool = False
+
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = ""
+    RESEND_FROM_NAME: str = "Vidhya AI"
+    RESEND_REPLY_TO: str = ""
     SUPERADMIN_EMAIL: str = "admin@example.com"
 
-    # ── Database ──────────────────────────────────────────────────
     POSTGRES_USER: str = "vidhya"
     POSTGRES_PASSWORD: str = "CHANGE_ME"
     POSTGRES_DB: str = "vidhya_db"
@@ -43,26 +41,16 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://vidhya:CHANGE_ME@postgres:5432/vidhya_db"
     DATABASE_URL_SYNC: str = "postgresql://vidhya:CHANGE_ME@postgres:5432/vidhya_db"
 
-    # DB pool settings
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_RECYCLE: int = 300
     DB_ECHO: bool = False
 
-    # ── Redis ─────────────────────────────────────────────────────
     REDIS_URL: str = "redis://redis:6379/0"
     REDIS_CELERY_BROKER: str = "redis://redis:6379/1"
     REDIS_CELERY_BACKEND: str = "redis://redis:6379/2"
     REDIS_MAX_CONNECTIONS: int = 20
 
-    # ── Mistral API ───────────────────────────────────────────────
-    MISTRAL_API_KEY: str = ""
-    MISTRAL_CHAT_MODEL: str = "mistral-small-latest"
-    MISTRAL_EMBED_MODEL: str = "mistral-embed"
-    EMBEDDING_DIMENSIONS: int = 1024
-    MISTRAL_REQUEST_TIMEOUT: int = 60  # seconds
-
-    # ── MinIO ─────────────────────────────────────────────────────
     MINIO_ROOT_USER: str = "minioadmin"
     MINIO_ROOT_PASSWORD: str = "CHANGE_ME"
     MINIO_ENDPOINT: str = "http://minio:9000"
@@ -70,11 +58,9 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "vidhya-documents"
     MINIO_REGION: str = "us-east-1"
 
-    # ── Telegram ──────────────────────────────────────────────────
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_BOT_USERNAME: str = "vidhya_bot"
 
-    # ── Admin ─────────────────────────────────────────────────────
     ADMIN_DEFAULT_USERNAME: str = "admin"
     ADMIN_DEFAULT_PASSWORD: str = "CHANGE_ME"
     ADMIN_TOTP_SECRET: str = ""
@@ -82,20 +68,10 @@ class Settings(BaseSettings):
     ADMIN_MAX_FAILED_LOGINS: int = 5
     ADMIN_LOCKOUT_MINUTES: int = 15
 
-    # ── PhonePe ───────────────────────────────────────────────────
-    PHONEPE_MERCHANT_ID: str = ""
-    PHONEPE_SALT_KEY: str = ""
-    PHONEPE_SALT_INDEX: int = 1
-    PHONEPE_ENV: str = "sandbox"
-    PHONEPE_CALLBACK_URL: str = "http://localhost/api/v1/payments/webhook"
-    PHONEPE_REDIRECT_URL: str = "http://localhost/payment/status"
-
-    # ── Security ──────────────────────────────────────────────────
     SECRET_KEY: str = "CHANGE_ME_generate_with_python_secrets_token_hex_32"
     CSRF_SECRET: str = "CHANGE_ME_generate_with_python_secrets_token_hex_32"
     CORS_ORIGINS: str = "http://localhost,http://localhost:3000,http://localhost:5173"
 
-    # Session settings
     SESSION_EXPIRY_SECONDS: int = 3600  # 1 hour
     ADMIN_SESSION_EXPIRY_SECONDS: int = 1800  # 30 minutes
     SESSION_COOKIE_NAME: str = "vidhya_session"
@@ -103,17 +79,14 @@ class Settings(BaseSettings):
     SESSION_COOKIE_HTTPONLY: bool = True
     SESSION_COOKIE_SAMESITE: str = "Strict"
 
-    # ── Celery ────────────────────────────────────────────────────
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
     CELERY_WORKER_CONCURRENCY: int = 2
 
-    # ── Rate Limiting ─────────────────────────────────────────────
-    RATE_LIMIT_AI_PER_MINUTE: int = 10
+    RATE_LIMIT_AI_PER_MINUTE: int = 60
     RATE_LIMIT_LOGIN_PER_MINUTE: int = 5
     RATE_LIMIT_UPLOAD_PER_HOUR: int = 10
 
-    # ── Upload Limits ─────────────────────────────────────────────────────────────
     MAX_UPLOAD_SIZE_MB: int = 100
     ALLOWED_MIME_TYPES: str = "application/pdf"
     CHUNK_SIZE: int = 500  # tokens per chunk
@@ -143,6 +116,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENV == "production"
+
+    @property
+    def payments_demo_allowed(self) -> bool:
+        return self.PAYMENTS_DEMO_ENABLED or not self.is_production
 
     @property
     def is_development(self) -> bool:

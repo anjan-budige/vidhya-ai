@@ -1,13 +1,5 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Analytics Router                                   ║
-║  Provides: Real-time telemetry dashboard statistics for admin    ║
-║  portals.                                                        ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Any
 
 from fastapi import APIRouter, Depends, status
@@ -22,8 +14,10 @@ from app.workers.celery_app import celery_app
 from app.dependencies import get_db, get_current_admin, require_admin_or_above
 from app.models.user import User
 from app.models.conversation import Conversation
+from app.models.message import Message
+from app.models.plan import Plan
 from app.models.usage_tracking import UsageTracking
-from app.models.payment import Payment
+from app.models.payment import PaymentOrder
 from app.models.subscription import UserSubscription
 from app.models.document import Document
 from app.schemas.analytics import DashboardStats
@@ -55,9 +49,6 @@ async def get_admin_dashboard_stats(
     conv_cnt_stmt = select(func.count(Conversation.id))
     total_conversations = (await db.execute(conv_cnt_stmt)).scalar() or 0
     
-    active_conv_stmt = select(func.count(Conversation.id)).where(Conversation.status == "active")
-    active_conversations = (await db.execute(active_conv_stmt)).scalar() or 0
-    
     # 3. Message & Token telemetry today (Usage records)
     msg_sum_stmt = select(func.sum(UsageTracking.messages_used)).where(UsageTracking.period_type == "daily", UsageTracking.period_date == today)
     total_messages_today = (await db.execute(msg_sum_stmt)).scalar() or 0
@@ -66,11 +57,11 @@ async def get_admin_dashboard_stats(
     total_tokens_today = (await db.execute(token_sum_stmt)).scalar() or 0
     
     # 4. Revenue statistics (Amount stored in Paise)
-    rev_sum_stmt = select(func.sum(Payment.amount_inr)).where(Payment.status == "success")
+    rev_sum_stmt = select(func.sum(PaymentOrder.amount_paise)).where(PaymentOrder.status == "paid")
     total_revenue_paise = (await db.execute(rev_sum_stmt)).scalar() or 0
     total_revenue = float(total_revenue_paise / 100)
     
-    month_rev_stmt = select(func.sum(Payment.amount_inr)).where(Payment.status == "success", Payment.completed_at >= datetime(today.year, today.month, 1, tzinfo=timezone.utc))
+    month_rev_stmt = select(func.sum(PaymentOrder.amount_paise)).where(PaymentOrder.status == "paid", PaymentOrder.paid_at >= datetime(today.year, today.month, 1, tzinfo=timezone.utc))
     revenue_this_month_paise = (await db.execute(month_rev_stmt)).scalar() or 0
     revenue_this_month = float(revenue_this_month_paise / 100)
     
@@ -86,7 +77,6 @@ async def get_admin_dashboard_stats(
         total_users=total_users,
         active_users_today=active_users_today,
         total_conversations=total_conversations,
-        active_conversations=active_conversations,
         total_messages_today=total_messages_today,
         total_tokens_today=total_tokens_today,
         total_revenue=total_revenue,
@@ -94,6 +84,74 @@ async def get_admin_dashboard_stats(
         active_subscriptions=active_subscriptions,
         total_documents=total_documents
     )
+
+
+@router.get("/trends", status_code=status.HTTP_200_OK)
+async def get_admin_trends(
+    days: int = 7,
+    current_admin: CurrentAdmin = Depends(require_admin_or_above),
+    db: AsyncSession = Depends(get_db),
+):
+    """Daily signups, revenue and message volume for the dashboard charts."""
+    days = max(1, min(days, 30))
+    today = date.today()
+    start_day = today - timedelta(days=days - 1)
+    start_dt = datetime.combine(start_day, datetime.min.time(), tzinfo=timezone.utc)
+
+    user_rows = (
+        await db.execute(
+            select(func.date(User.created_at).label("day"), func.count(User.id))
+            .where(User.created_at >= start_dt)
+            .group_by("day")
+        )
+    ).all()
+    payment_rows = (
+        await db.execute(
+            select(func.date(PaymentOrder.paid_at).label("day"), func.sum(PaymentOrder.amount_paise))
+            .where(
+                PaymentOrder.status == "paid",
+                PaymentOrder.paid_at >= start_dt,
+            )
+            .group_by("day")
+        )
+    ).all()
+    message_rows = (
+        await db.execute(
+            select(func.date(Message.created_at).label("day"), func.count(Message.id))
+            .where(Message.created_at >= start_dt)
+            .group_by("day")
+        )
+    ).all()
+
+    users = {row[0]: row[1] for row in user_rows if row[0]}
+    revenue = {row[0]: float(row[1] or 0) / 100 for row in payment_rows if row[0]}
+    messages = {row[0]: row[1] for row in message_rows if row[0]}
+
+    series = []
+    for offset in range(days):
+        day = start_day + timedelta(days=offset)
+        series.append({
+            "date": day.isoformat(),
+            "label": day.strftime("%d %b"),
+            "users": int(users.get(day, 0)),
+            "revenue": round(revenue.get(day, 0.0), 2),
+            "messages": int(messages.get(day, 0)),
+        })
+
+    plan_rows = (
+        await db.execute(
+            select(Plan.name, Plan.display_name, func.count(UserSubscription.id))
+            .join(UserSubscription, UserSubscription.plan_id == Plan.id)
+            .where(UserSubscription.status == "active")
+            .group_by(Plan.name, Plan.display_name)
+        )
+    ).all()
+    plans = [
+        {"name": name, "display_name": display, "count": int(count)}
+        for name, display, count in plan_rows
+    ]
+
+    return {"days": days, "series": series, "plans": plans}
 
 
 @router.get("/system-health", status_code=status.HTTP_200_OK)
@@ -120,7 +178,6 @@ async def get_admin_system_health(
 
     all_healthy = True
 
-    # ── PostgreSQL ────────────────────────────────────────────────
     try:
         start = time.time()
         async with engine.begin() as conn:
@@ -148,7 +205,6 @@ async def get_admin_system_health(
     except Exception:
         pass
 
-    # ── Redis ─────────────────────────────────────────────────────
     try:
         start = time.time()
         pong = await redis_client.ping()
@@ -166,39 +222,98 @@ async def get_admin_system_health(
         }
         all_healthy = False
 
-    # ── Mistral API ───────────────────────────────────────────────
+    from app.database import async_session_factory
+    from app.services.ai_providers import AIProviderService
+
+    ai_details = {}
+    chat_ok = False
+    embedding_ok = False
+    async with async_session_factory() as session:
+        try:
+            chat = await AIProviderService.get_default(session, redis_client, "chat")
+            ai_details["chat"] = {
+                "status": "configured",
+                "provider": chat.provider_name,
+                "model": chat.model,
+                "context_window": chat.context_window,
+                "max_output_tokens": chat.max_output_tokens,
+            }
+            chat_ok = True
+        except Exception as exc:
+            ai_details["chat"] = {"status": "not_configured", "detail": str(exc)}
+
+        try:
+            embedding = await AIProviderService.get_default(
+                session, redis_client, "embedding"
+            )
+            ai_details["embedding"] = {
+                "status": "configured",
+                "provider": embedding.provider_name,
+                "model": embedding.model,
+                "dimensions": embedding.embedding_dimensions,
+            }
+            embedding_ok = True
+        except Exception as exc:
+            ai_details["embedding"] = {
+                "status": "not_configured",
+                "detail": str(exc),
+            }
+
+    results["services"]["ai"] = {
+        "status": "configured" if chat_ok and embedding_ok else (
+            "degraded" if chat_ok else "not_configured"
+        ),
+        "chat": ai_details["chat"],
+        "embedding": ai_details["embedding"],
+    }
+    if not chat_ok or not embedding_ok:
+        all_healthy = False
+
     try:
-        start = time.time()
+        started = time.time()
         async with httpx.AsyncClient(timeout=3.0) as client:
             response = await client.get(
-                "https://api.mistral.ai/v1/models",
-                headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"}
+                f"{settings.MINIO_ENDPOINT.rstrip('/')}/minio/health/live"
             )
-            latency_ms = round((time.time() - start) * 1000, 1)
-
-            if response.status_code == 200:
-                data = response.json()
-                models = [m["id"] for m in data.get("data", [])]
-                results["services"]["mistral"] = {
-                    "status": "connected",
-                    "latency_ms": latency_ms,
-                    "models_loaded": models[:5], # Only list top 5 to save space
-                    "model_count": len(models),
-                }
-            else:
-                results["services"]["mistral"] = {
-                    "status": "error",
-                    "http_status": response.status_code,
-                }
-                all_healthy = False
-    except Exception as e:
-        results["services"]["mistral"] = {
+        results["services"]["object_storage"] = {
+            "status": "connected" if response.status_code < 400 else "error",
+            "latency_ms": round((time.time() - started) * 1000, 1),
+            "endpoint": settings.MINIO_ENDPOINT,
+            "bucket": settings.MINIO_BUCKET,
+        }
+        if response.status_code >= 400:
+            all_healthy = False
+    except Exception as exc:
+        results["services"]["object_storage"] = {
             "status": "disconnected",
-            "error": str(e),
+            "endpoint": settings.MINIO_ENDPOINT,
+            "error": "Object storage is unreachable.",
         }
         all_healthy = False
 
-    # ── Celery Workers ────────────────────────────────────────────
+    try:
+        from app.services.payments.service import PaymentService
+
+        async with async_session_factory() as session:
+            environment = await PaymentService.get_environment(session)
+            provider = await PaymentService.get_active_provider(session, environment)
+        results["services"]["payments"] = {
+            "status": "configured" if provider else "not_configured",
+            "environment": environment,
+            "provider": provider.display_name if provider else None,
+            "mode": getattr(provider, "mode", environment),
+        }
+    except Exception as exc:
+        results["services"]["payments"] = {
+            "status": "not_configured",
+            "detail": "Payment settings are unavailable.",
+        }
+
+    results["services"]["telegram_bot"] = {
+        "status": "configured" if settings.TELEGRAM_BOT_TOKEN else "not_configured",
+        "username": settings.TELEGRAM_BOT_USERNAME or None,
+    }
+
     try:
         start = time.time()
         i = celery_app.control.inspect(timeout=1.0)

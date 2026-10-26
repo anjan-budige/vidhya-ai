@@ -1,11 +1,12 @@
 """
-Vidhya Bot — Session Middleware & Storage
-Maps Telegram user_id ↔ backend session_token + active conversation_id.
-Uses in-memory dict (sufficient for single-instance bot).
+Vidhya Bot — in-process session storage.
+
+Maps a Telegram id to the API key used for backend requests and the
+session (conversation) currently selected in the chat.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 logger = logging.getLogger("vidhya.session")
@@ -14,13 +15,16 @@ logger = logging.getLogger("vidhya.session")
 @dataclass
 class UserSession:
     telegram_id: int
-    session_token: str
+    api_key: str
     user_id: str
     plan_name: str = "free"
-    active_conv_id: Optional[str] = None
+    current_session_id: Optional[str] = None
+    pending_message: Optional[str] = None
+    pending_at: Optional[float] = None
+    skip_idle_once: bool = False
 
 
-# In-process session store: telegram_id → UserSession
+# telegram_id → UserSession
 _sessions: dict[int, UserSession] = {}
 
 
@@ -36,10 +40,21 @@ def delete_session(telegram_id: int) -> None:
     _sessions.pop(telegram_id, None)
 
 
-def set_active_conversation(telegram_id: int, conv_id: Optional[str]) -> None:
+def set_current_session(telegram_id: int, session_id: Optional[str]) -> None:
     sess = _sessions.get(telegram_id)
     if sess:
-        sess.active_conv_id = conv_id
+        sess.current_session_id = session_id
+        sess.skip_idle_once = True
+
+
+def clear_pending(telegram_id: int) -> Optional[str]:
+    sess = _sessions.get(telegram_id)
+    if not sess:
+        return None
+    message = sess.pending_message
+    sess.pending_message = None
+    sess.pending_at = None
+    return message
 
 
 def update_plan(telegram_id: int, plan_name: str) -> None:

@@ -1,13 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Subscription Expiry Worker                         ║
-║  Celery Beat task:                                               ║
-║    - Runs daily at UTC 00:05                                     ║
-║    - Checks for active subscriptions past their expires_at date  ║
-║    - Downgrades expired users to the Free plan                   ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import logging
 import os
 import uuid
@@ -83,11 +73,9 @@ def expire_subscriptions():
             try:
                 old_plan_name = sub.plan_snapshot.get("plan_name", "unknown")
                 
-                # Mark as expired
                 sub.status = "expired"
                 sub.updated_at = now_ist
                 
-                # Create a new free subscription
                 new_sub = UserSubscription(
                     user_id=sub.user_id,
                     plan_id=free_plan.id,
@@ -102,15 +90,6 @@ def expire_subscriptions():
                 )
                 db.add(new_sub)
                 
-                # Close all active conversations to enforce Free tier limit
-                db.execute(
-                    update(Conversation)
-                    .where(Conversation.user_id == sub.user_id)
-                    .where(Conversation.status == "active")
-                    .values(status="timeout", closed_at=now_ist)
-                )
-                
-                # Clear User Subscription Cache & Quota so limits reload dynamically
                 cache_key = RedisKeys.subscription_cache(str(sub.user_id))
                 r.delete(cache_key)
                 
@@ -132,7 +111,6 @@ def expire_subscriptions():
             except Exception as e:
                 logger.error(f"Failed to downgrade user {sub.user_id}: {e}")
                 
-        # Commit all downgrades
         db.commit()
 
     logger.info(

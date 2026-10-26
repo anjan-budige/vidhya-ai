@@ -1,7 +1,102 @@
-import { useState, useEffect } from 'react';
-import { Server, Database, Box, CheckCircle2, XCircle, RefreshCw, Activity, Cpu, HardDrive } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  Bot,
+  Boxes,
+  CheckCircle2,
+  CreditCard,
+  Database,
+  HardDrive,
+  RefreshCw,
+  Server,
+  XCircle,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api';
+import { Badge } from '../../components/ui/Badge';
+
+type HealthLevel = 'good' | 'warn' | 'bad';
+
+function classify(status?: string): HealthLevel {
+  if (!status) return 'bad';
+  if (['connected', 'configured', 'healthy', 'online'].includes(status)) return 'good';
+  if (['degraded', 'not_configured'].includes(status)) return 'warn';
+  return 'bad';
+}
+
+const levelStyles: Record<HealthLevel, string> = {
+  good: 'border-green-200 bg-success-soft/40',
+  warn: 'border-amber-200 bg-warning-soft/40',
+  bad: 'border-red-200 bg-danger-soft/40',
+};
+
+function StatusIcon({ level }: { level: HealthLevel }) {
+  if (level === 'good') return <CheckCircle2 className="h-5 w-5 text-success" />;
+  if (level === 'warn') return <AlertTriangle className="h-5 w-5 text-warning" />;
+  return <XCircle className="h-5 w-5 text-danger" />;
+}
+
+function ServiceCard({
+  title,
+  subtitle,
+  icon: Icon,
+  status,
+  metrics,
+  error,
+}: {
+  title: string;
+  subtitle: string;
+  icon: LucideIcon;
+  status?: string;
+  metrics: { label: string; value: string | number }[];
+  error?: string;
+}) {
+  const level = classify(status);
+  return (
+    <div className={`card border-2 p-5 transition-colors ${levelStyles[level]}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface text-ink ring-1 ring-line">
+            <Icon className="h-5 w-5" />
+          </span>
+          <div>
+            <h3 className="text-sm font-semibold text-ink">{title}</h3>
+            <p className="text-xs text-muted">{subtitle}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge tone={level === 'good' ? 'success' : level === 'warn' ? 'warning' : 'danger'}>
+            {status || 'unknown'}
+          </Badge>
+          <StatusIcon level={level} />
+        </div>
+      </div>
+
+      {metrics.length > 0 && (
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {metrics.map((metric) => (
+            <div key={metric.label} className="rounded-lg bg-surface/80 px-3 py-2 ring-1 ring-line">
+              <p className="text-[10px] font-medium uppercase tracking-wider text-muted">
+                {metric.label}
+              </p>
+              <p className="mt-0.5 truncate text-xs font-semibold text-ink" title={String(metric.value)}>
+                {metric.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p className="mt-3 rounded-md bg-surface/70 px-2.5 py-1.5 text-[11px] text-danger ring-1 ring-red-100">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function AdminSystemStatus() {
   const [health, setHealth] = useState<any>(null);
@@ -14,11 +109,8 @@ export default function AdminSystemStatus() {
       const response = await api.get('/analytics/system-health');
       setHealth(response.data);
     } catch (err: any) {
-      if (err.response?.data) {
-        setHealth(err.response.data);
-      } else {
-        toast.error('Failed to fetch system status');
-      }
+      if (err.response?.data) setHealth(err.response.data);
+      else toast.error('Unable to load system status.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -27,264 +119,222 @@ export default function AdminSystemStatus() {
 
   useEffect(() => {
     fetchHealth();
-    // Auto-refresh every 30 seconds
     const interval = setInterval(fetchHealth, 30000);
     return () => clearInterval(interval);
   }, []);
 
   const formatUptime = (seconds: number) => {
     if (!seconds) return '0s';
-    const h = Math.floor(seconds / 3600);
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    
-    if (h > 0) return `${h}h ${m}m`;
-    if (m > 0) return `${m}m ${s}s`;
-    return `${s}s`;
-  };
-
-  const getStatusIcon = (status: string) => {
-    if (status === 'connected' || status === 'healthy' || status === 'online') {
-      return <CheckCircle2 className="w-6 h-6 text-green-500" />;
-    }
-    return <XCircle className="w-6 h-6 text-red-500" />;
-  };
-
-  const getStatusColor = (status: string) => {
-    if (status === 'connected' || status === 'healthy' || status === 'online') {
-      return 'border-green-200 bg-green-50/30';
-    }
-    return 'border-red-200 bg-red-50/30';
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    return `${m}m ${Math.floor(seconds % 60)}s`;
   };
 
   if (loading && !health) {
     return (
-      <div className="flex justify-center items-center h-full">
-        <div className="w-10 h-10 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin"></div>
+      <div className="mx-auto max-w-7xl space-y-5">
+        <div className="h-20 animate-pulse rounded-xl bg-surface" />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="h-48 animate-pulse rounded-xl bg-surface" />
+          ))}
+        </div>
       </div>
     );
   }
 
+  const services = health?.services || {};
+  const overall = classify(health?.status);
+  const serviceList = Object.entries(services);
+  const healthyCount = serviceList.filter(
+    ([, value]: [string, any]) => classify(value?.status) === 'good'
+  ).length;
+
   return (
-    <div className="flex flex-col h-full max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between mb-4">
+    <div className="mx-auto max-w-7xl space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">System Status</h1>
-          <p className="text-sm text-slate-500">Live health monitoring of infrastructure components.</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-brand-600">Operations</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-ink">System Status</h1>
+          <p className="mt-1 text-sm text-muted">
+            Live health of the API, database, cache, storage, AI and workers.
+          </p>
         </div>
-        
-        <button 
-          onClick={fetchHealth} 
-          disabled={refreshing}
-          className="flex items-center text-sm border border-slate-200 px-4 py-2 rounded-xl hover:bg-slate-50 font-medium text-slate-600 transition-colors shadow-sm bg-white disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} /> 
-          {refreshing ? 'Refreshing...' : 'Refresh'}
+        <button onClick={fetchHealth} disabled={refreshing} className="btn-outline gap-2 text-xs">
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* API Server Card */}
-        <div className="glass-card p-6 flex flex-col justify-between">
-          <div>
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex items-center space-x-3">
-                <div className="p-3 bg-brand-50 text-brand-600 rounded-xl">
-                  <Server className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-slate-800">Core API Server</h2>
-                  <p className="text-sm text-slate-500">{health?.service} v{health?.version}</p>
-                </div>
-              </div>
-              {getStatusIcon(health?.status || 'error')}
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4 mt-6">
-              <div className="bg-slate-50 rounded-xl p-4">
-                <div className="text-xs text-slate-500 font-medium mb-1">Environment</div>
-                <div className="font-semibold text-slate-700 capitalize">{health?.environment || 'Unknown'}</div>
-              </div>
-              <div className="bg-slate-50 rounded-xl p-4">
-                <div className="text-xs text-slate-500 font-medium mb-1">Uptime</div>
-                <div className="font-semibold text-slate-700">{formatUptime(health?.uptime_seconds)}</div>
-              </div>
+      <div className={`card border-2 ${levelStyles[overall]} p-5`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-surface ring-1 ring-line">
+              <Activity className={`h-5 w-5 ${overall === 'good' ? 'text-success' : overall === 'warn' ? 'text-warning' : 'text-danger'}`} />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-ink">
+                {overall === 'good' ? 'All systems operational' : 'Attention required'}
+              </p>
+              <p className="text-xs text-muted">
+                {healthyCount}/{serviceList.length} services healthy · checked{' '}
+                {health?.timestamp ? new Date(health.timestamp).toLocaleTimeString() : '—'}
+              </p>
             </div>
           </div>
-          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-            <span>Last checked: {new Date(health?.timestamp).toLocaleTimeString()}</span>
-            <span className="flex items-center"><Activity className="w-3 h-3 mr-1" /> Live</span>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone="neutral">Environment: {health?.environment || 'unknown'}</Badge>
+            <Badge tone="neutral">Uptime: {formatUptime(health?.uptime_seconds)}</Badge>
+            <Badge tone="brand">v{health?.version || '—'}</Badge>
           </div>
         </div>
-
-        {/* PostgreSQL Database */}
-        <div className={`glass-card p-6 border-2 transition-colors duration-300 ${getStatusColor(health?.services?.postgres?.status)}`}>
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex items-center space-x-3">
-              <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
-                <Database className="w-6 h-6" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-800">PostgreSQL</h2>
-                <p className="text-sm text-slate-500">Primary Database (pgvector)</p>
-              </div>
-            </div>
-            {getStatusIcon(health?.services?.postgres?.status)}
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 mt-6">
-            <div className="bg-white/60 rounded-xl p-4">
-              <div className="text-xs text-slate-500 font-medium mb-1 flex items-center">
-                <Activity className="w-3 h-3 mr-1" /> Latency
-              </div>
-              <div className="font-semibold text-slate-700">
-                {health?.services?.postgres?.latency_ms ? `${health.services.postgres.latency_ms} ms` : 'N/A'}
-              </div>
-            </div>
-            <div className="bg-white/60 rounded-xl p-4">
-              <div className="text-xs text-slate-500 font-medium mb-1 flex items-center">
-                <Box className="w-3 h-3 mr-1" /> Total Tables
-              </div>
-              <div className="font-semibold text-slate-700">{health?.services?.postgres?.tables || 'Unknown'}</div>
-            </div>
-          </div>
-          
-          {health?.services?.postgres?.error && (
-            <div className="mt-4 p-3 bg-red-50 text-red-700 text-xs rounded-lg border border-red-100 font-mono">
-              {health.services.postgres.error}
-            </div>
-          )}
-        </div>
-
-        {/* Redis Cache */}
-        <div className={`glass-card p-6 border-2 transition-colors duration-300 ${getStatusColor(health?.services?.redis?.status)}`}>
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex items-center space-x-3">
-              <div className="p-3 bg-red-50 text-red-600 rounded-xl">
-                <HardDrive className="w-6 h-6" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-800">Redis Cache</h2>
-                <p className="text-sm text-slate-500">Rate limiting & Session storage</p>
-              </div>
-            </div>
-            {getStatusIcon(health?.services?.redis?.status)}
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 mt-6">
-            <div className="bg-white/60 rounded-xl p-4">
-              <div className="text-xs text-slate-500 font-medium mb-1 flex items-center">
-                <Activity className="w-3 h-3 mr-1" /> Latency
-              </div>
-              <div className="font-semibold text-slate-700">
-                {health?.services?.redis?.latency_ms ? `${health.services.redis.latency_ms} ms` : 'N/A'}
-              </div>
-            </div>
-            <div className="bg-white/60 rounded-xl p-4">
-              <div className="text-xs text-slate-500 font-medium mb-1 flex items-center">
-                <Cpu className="w-3 h-3 mr-1" /> Memory Used
-              </div>
-              <div className="font-semibold text-slate-700">{health?.services?.redis?.used_memory || 'Unknown'}</div>
-            </div>
-          </div>
-          
-          {health?.services?.redis?.error && (
-            <div className="mt-4 p-3 bg-red-50 text-red-700 text-xs rounded-lg border border-red-100 font-mono">
-              {health.services.redis.error}
-            </div>
-          )}
-        </div>
-
-        {/* Mistral API */}
-        <div className={`glass-card p-6 border-2 transition-colors duration-300 ${getStatusColor(health?.services?.mistral?.status)}`}>
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex items-center space-x-3">
-              <div className="p-3 bg-purple-50 text-purple-600 rounded-xl">
-                <Cpu className="w-6 h-6" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-800">Mistral API Engine</h2>
-                <p className="text-sm text-slate-500">Inference & Embeddings</p>
-              </div>
-            </div>
-            {getStatusIcon(health?.services?.mistral?.status)}
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 mt-6">
-            <div className="bg-white/60 rounded-xl p-4">
-              <div className="text-xs text-slate-500 font-medium mb-1 flex items-center">
-                <Activity className="w-3 h-3 mr-1" /> Latency
-              </div>
-              <div className="font-semibold text-slate-700">
-                {health?.services?.mistral?.latency_ms ? `${health.services.mistral.latency_ms} ms` : 'N/A'}
-              </div>
-            </div>
-            <div className="bg-white/60 rounded-xl p-4">
-              <div className="text-xs text-slate-500 font-medium mb-1 flex items-center">
-                <Box className="w-3 h-3 mr-1" /> Models Discovered
-              </div>
-              <div className="font-semibold text-slate-700 truncate" title={health?.services?.mistral?.models_loaded?.join(', ')}>
-                {health?.services?.mistral?.models_loaded?.length > 0 
-                  ? `${health.services.mistral.model_count} total models`
-                  : '0 models'}
-              </div>
-            </div>
-          </div>
-          
-          {health?.services?.mistral?.error && (
-            <div className="mt-4 p-3 bg-red-50 text-red-700 text-xs rounded-lg border border-red-100 font-mono">
-              {health.services.mistral.error}
-            </div>
-          )}
-        </div>
-
       </div>
-      
-      {/* ── Additional Services Row ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-        {/* Celery Workers */}
-        <div className={`glass-card p-6 border-2 transition-colors duration-300 ${getStatusColor(health?.services?.celery?.status)}`}>
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex items-center space-x-3">
-              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
-                <Activity className="w-6 h-6" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-800">Celery Workers</h2>
-                <p className="text-sm text-slate-500">Background Tasks & Processing</p>
-              </div>
-            </div>
-            {getStatusIcon(health?.services?.celery?.status)}
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 mt-6">
-            <div className="bg-white/60 rounded-xl p-4">
-              <div className="text-xs text-slate-500 font-medium mb-1 flex items-center">
-                <Activity className="w-3 h-3 mr-1" /> Latency
-              </div>
-              <div className="font-semibold text-slate-700">
-                {health?.services?.celery?.latency_ms ? `${health.services.celery.latency_ms} ms` : 'N/A'}
-              </div>
-            </div>
-            <div className="bg-white/60 rounded-xl p-4">
-              <div className="text-xs text-slate-500 font-medium mb-1 flex items-center">
-                <Server className="w-3 h-3 mr-1" /> Active Workers
-              </div>
-              <div className="font-semibold text-slate-700">{health?.services?.celery?.workers_online ?? '0'}</div>
-            </div>
-          </div>
-          
-          {health?.services?.celery?.error && (
-            <div className="mt-4 p-3 bg-red-50 text-red-700 text-xs rounded-lg border border-red-100 font-mono">
-              {health.services.celery.error}
-            </div>
-          )}
-          {health?.services?.celery?.message && (
-            <div className="mt-4 p-3 bg-yellow-50 text-yellow-700 text-xs rounded-lg border border-yellow-100 font-mono">
-              {health.services.celery.message}
-            </div>
-          )}
-        </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ServiceCard
+          title="Core API"
+          subtitle={health?.service || 'FastAPI'}
+          icon={Server}
+          status={health?.status}
+          metrics={[
+            { label: 'Environment', value: health?.environment || 'unknown' },
+            { label: 'Uptime', value: formatUptime(health?.uptime_seconds) },
+          ]}
+        />
+
+        <ServiceCard
+          title="PostgreSQL"
+          subtitle="Primary database · pgvector"
+          icon={Database}
+          status={services.postgres?.status}
+          metrics={[
+            {
+              label: 'Latency',
+              value: services.postgres?.latency_ms != null ? `${services.postgres.latency_ms} ms` : 'N/A',
+            },
+            { label: 'Tables', value: services.postgres?.tables ?? '—' },
+          ]}
+          error={services.postgres?.error}
+        />
+
+        <ServiceCard
+          title="Redis"
+          subtitle="Sessions, quotas and cache"
+          icon={HardDrive}
+          status={services.redis?.status}
+          metrics={[
+            {
+              label: 'Latency',
+              value: services.redis?.latency_ms != null ? `${services.redis.latency_ms} ms` : 'N/A',
+            },
+            { label: 'Memory', value: services.redis?.used_memory || '—' },
+          ]}
+          error={services.redis?.error}
+        />
+
+        <ServiceCard
+          title="Object storage"
+          subtitle="Silo · PDF bucket"
+          icon={Boxes}
+          status={services.object_storage?.status}
+          metrics={[
+            { label: 'Bucket', value: services.object_storage?.bucket || '—' },
+            {
+              label: 'Latency',
+              value:
+                services.object_storage?.latency_ms != null
+                  ? `${services.object_storage.latency_ms} ms`
+                  : 'N/A',
+            },
+          ]}
+          error={services.object_storage?.error}
+        />
+
+        <ServiceCard
+          title="AI chat model"
+          subtitle={
+            services.ai?.chat?.provider
+              ? `${services.ai.chat.provider} · ${services.ai.chat.model}`
+              : 'No active chat model'
+          }
+          icon={Bot}
+          status={services.ai?.chat?.status}
+          metrics={[
+            {
+              label: 'Context',
+              value: services.ai?.chat?.context_window?.toLocaleString() || '—',
+            },
+            {
+              label: 'Max output',
+              value: services.ai?.chat?.max_output_tokens?.toLocaleString() || '—',
+            },
+          ]}
+          error={services.ai?.chat?.detail}
+        />
+
+        <ServiceCard
+          title="AI embeddings"
+          subtitle={
+            services.ai?.embedding?.provider
+              ? `${services.ai.embedding.provider} · ${services.ai.embedding.model}`
+              : 'No active embedding model'
+          }
+          icon={Database}
+          status={services.ai?.embedding?.status}
+          metrics={[
+            { label: 'Dimensions', value: services.ai?.embedding?.dimensions ?? '—' },
+            { label: 'Used for', value: 'Document search' },
+          ]}
+          error={services.ai?.embedding?.detail}
+        />
+
+        <ServiceCard
+          title="Celery workers"
+          subtitle="PDF ingestion, quotas and analytics"
+          icon={Activity}
+          status={services.celery?.status}
+          metrics={[
+            {
+              label: 'Latency',
+              value: services.celery?.latency_ms != null ? `${services.celery.latency_ms} ms` : 'N/A',
+            },
+            { label: 'Workers online', value: services.celery?.workers_online ?? 0 },
+          ]}
+          error={services.celery?.error || services.celery?.message}
+        />
+
+        <ServiceCard
+          title="Payments"
+          subtitle={
+            services.payments?.provider
+              ? `${services.payments.provider} · ${services.payments.environment}`
+              : `No active provider · ${services.payments?.environment || '—'}`
+          }
+          icon={CreditCard}
+          status={services.payments?.status}
+          metrics={[
+            { label: 'Environment', value: services.payments?.environment || '—' },
+            { label: 'Provider', value: services.payments?.provider || 'none' },
+          ]}
+          error={services.payments?.detail}
+        />
+
+        <ServiceCard
+          title="Telegram bot"
+          subtitle="API-key login and chat"
+          icon={Bot}
+          status={services.telegram_bot?.status}
+          metrics={[
+            { label: 'Username', value: services.telegram_bot?.username || '—' },
+            {
+              label: 'Backend',
+              value: services.telegram_bot?.status === 'configured' ? 'connected' : 'not configured',
+            },
+          ]}
+        />
       </div>
     </div>
   );

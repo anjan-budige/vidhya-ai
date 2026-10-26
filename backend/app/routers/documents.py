@@ -1,14 +1,8 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Documents Router                                   ║
-║  Provides: Multipart S3 uploads, metadata updating, list queries ║
-║  and deletion cascade cleanups.                                  ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
+from urllib.parse import quote
 
 import boto3
 import magic
@@ -19,7 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import (
     get_db,
     get_current_admin,
-    get_pagination
+    get_pagination,
+    require_admin_or_above,
+    require_superadmin,
 )
 from app.config import get_settings
 from app.models.document import Document
@@ -58,7 +54,7 @@ async def upload_pdf_document(
     subject: Optional[str] = Form(None, description="Topic subject classification"),
     description: Optional[str] = Form(None, description="File description"),
     tags: Optional[str] = Form(None, description="Comma separated tags"),
-    current_admin: CurrentAdmin = Depends(get_current_admin),
+    current_admin: CurrentAdmin = Depends(require_admin_or_above),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -72,7 +68,6 @@ async def upload_pdf_document(
             detail="Invalid file format. Only PDF documents are allowed."
         )
         
-    # Read bytes to verify file limits
     file_bytes = await file.read()
     file_size = len(file_bytes)
     
@@ -95,8 +90,11 @@ async def upload_pdf_document(
     original_filename = file.filename
     sanitized_filename = "".join(c for c in original_filename if c.isalnum() or c in (".", "-", "_")).strip()
     
-    subject_folder = subject.strip().lower() if subject else "uncategorized"
-    s3_key = f"subjects/{subject_folder}/{doc_uuid}-{sanitized_filename}"
+    subject_folder = (
+        re.sub(r"[^a-z0-9_-]+", "-", (subject or "").strip().lower()).strip("-")
+        or "uncategorized"
+    )
+    s3_key = f"subjects/{subject_folder}/{doc_uuid}-{sanitized_filename or 'document.pdf'}"
     
     # 3. Upload file stream directly to MinIO
     try:
@@ -137,7 +135,6 @@ async def upload_pdf_document(
     db.add(doc)
     await db.flush()
     
-    # Audit Logging
     db.add(AuditLog(
         admin_id=current_admin.id,
         action="document.uploaded",
@@ -235,7 +232,6 @@ async def download_document(
     try:
         s3_response = s3_client.get_object(Bucket=doc.s3_bucket, Key=doc.s3_key)
         
-        # Audit Logging
         db.add(AuditLog(
             admin_id=current_admin.id,
             action="document.downloaded",
@@ -245,10 +241,16 @@ async def download_document(
         ))
         await db.commit()
         
+        fallback = re.sub(r'[^A-Za-z0-9._-]+', "_", doc.original_filename or "document.pdf")
+        encoded = quote(doc.original_filename or "document.pdf")
         return StreamingResponse(
             s3_response["Body"],
             media_type=doc.mime_type or "application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{doc.original_filename}"'}
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}'
+                )
+            },
         )
     except Exception as e:
         raise HTTPException(
@@ -261,7 +263,7 @@ async def download_document(
 async def update_document_metadata(
     doc_id: uuid.UUID,
     payload: DocumentUpdateRequest,
-    current_admin: CurrentAdmin = Depends(get_current_admin),
+    current_admin: CurrentAdmin = Depends(require_admin_or_above),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -282,7 +284,6 @@ async def update_document_metadata(
         
     doc.updated_at = datetime.now(timezone.utc)
     
-    # Audit Logging
     db.add(AuditLog(
         admin_id=current_admin.id,
         action="document.updated",
@@ -306,7 +307,6 @@ async def get_document_parsed_chunks(
     """
     Retrieve paginated vector embedding text chunks associated with the document (Admin only).
     """
-    # Verify document exists
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
@@ -328,7 +328,7 @@ async def get_document_parsed_chunks(
 @router.delete("/{doc_id}", status_code=status.HTTP_200_OK)
 async def delete_document(
     doc_id: uuid.UUID,
-    current_admin: CurrentAdmin = Depends(get_current_admin),
+    current_admin: CurrentAdmin = Depends(require_superadmin),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -361,7 +361,6 @@ async def delete_document(
     # 3. Delete Document from DB
     await db.execute(delete(Document).where(Document.id == doc_id))
     
-    # Audit Logging
     db.add(AuditLog(
         admin_id=current_admin.id,
         action="document.deleted",

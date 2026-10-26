@@ -1,5 +1,7 @@
 {
-  "name": "frontend",
+  "name": "vidhya-ai-frontend",
+  "author": "Anjan Budige",
+  "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,15 +12,23 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@twa-dev/sdk": "^8.0.2",
+    "animejs": "^4.5.0",
     "axios": "^1.16.1",
     "date-fns": "^4.3.0",
+    "katex": "^0.19.1",
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-hot-toast": "^2.6.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.15.1",
-    "recharts": "^3.8.1"
+    "recharts": "^3.8.1",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
+  },
+  "overrides": {
+    "katex": "$katex"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

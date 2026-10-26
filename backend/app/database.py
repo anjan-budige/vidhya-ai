@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Async Database Engine + Session Factory            ║
-║  SQLAlchemy 2.0 async with pgvector support                      ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -17,9 +10,6 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# ═══════════════════════════════════════════════════════════════════
-# Async Engine
-# ═══════════════════════════════════════════════════════════════════
 
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
@@ -30,9 +20,6 @@ engine: AsyncEngine = create_async_engine(
     pool_recycle=settings.DB_POOL_RECYCLE,
 )
 
-# ═══════════════════════════════════════════════════════════════════
-# Session Factory
-# ═══════════════════════════════════════════════════════════════════
 
 async_session_factory = async_sessionmaker(
     bind=engine,
@@ -42,18 +29,12 @@ async_session_factory = async_sessionmaker(
 )
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Declarative Base
-# ═══════════════════════════════════════════════════════════════════
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
     pass
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Session Context Manager
-# ═══════════════════════════════════════════════════════════════════
 
 async def get_db_session() -> AsyncSession:
     """

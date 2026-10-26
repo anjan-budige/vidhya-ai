@@ -1,17 +1,12 @@
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  VIDHYA BOT PLATFORM v3 — Docker Compose (Full Local Stack)            ║
-# ║  13 Services: postgres, redis, ollama, minio, backend, worker,         ║
-# ║               celery-beat, flower, bot, frontend, nginx + 2 init       ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
 
 services:
 
-  # ═══════════════════════════════════════════════════════════════════
-  # DATA LAYER
-  # ═══════════════════════════════════════════════════════════════════
 
   postgres:
-    image: pgvector/pgvector:pg18
+    build:
+      context: ./infrastructure/postgres
+      dockerfile: Dockerfile
+    image: vidhya-ai-postgres:18-pgvector0.8.7
     container_name: vidhya-postgres
     restart: unless-stopped
     env_file: .env
@@ -20,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -34,7 +29,7 @@ services:
       - vidhya-network
 
   redis:
-    image: redis:8.6.3-alpine
+    image: redis:8.6.7-alpine
     container_name: vidhya-redis
     restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
@@ -53,57 +48,50 @@ services:
 
 
 
-  # ═══════════════════════════════════════════════════════════════════
-  # OBJECT STORAGE
-  # ═══════════════════════════════════════════════════════════════════
 
+  # Silo — S3-compatible MinIO fork (MinIO images are no longer public)
   minio:
-    image: minio/minio
-    container_name: vidhya-minio
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z-distroless
+    container_name: vidhya-silo
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
-      - "127.0.0.1:9000:9000" # API
+      - "127.0.0.1:9000:9000" # S3 API
       - "127.0.0.1:9001:9001" # Console
     volumes:
       - minio_data:/data
-    healthcheck:
-      test: [ "CMD-SHELL", "mc ready local || exit 1" ]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
     networks:
       - vidhya-network
 
   minio-init:
-    image: minio/mc
-    container_name: vidhya-minio-init
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
+    container_name: vidhya-silo-init
     restart: "no"
     depends_on:
       minio:
-        condition: service_healthy
+        condition: service_started
     entrypoint: [ "/bin/sh", "-c" ]
-    environment:
-      - MC_HOST_vidhya=http://${MINIO_ROOT_USER:-minioadmin}:${MINIO_ROOT_PASSWORD:-CHANGE_ME}@minio:9000
     command:
       - |
-        echo "→ Creating bucket: ${MINIO_BUCKET:-vidhya-documents}"
-        mc mb --ignore-existing vidhya/${MINIO_BUCKET:-vidhya-documents}
+        echo "→ Waiting for Silo..."
+        mcli alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" || true
+        for i in $$(seq 1 30); do
+          mcli ls local >/dev/null 2>&1 && break
+          sleep 2
+        done
+        echo "→ Creating bucket: $$MINIO_BUCKET"
+        mcli mb --ignore-existing local/$$MINIO_BUCKET
         echo "→ Setting bucket policy to private..."
-        mc anonymous set none vidhya/${MINIO_BUCKET:-vidhya-documents}
-        echo "✓ MinIO initialization complete!"
-        mc ls vidhya/
+        mcli anonymous set none local/$$MINIO_BUCKET
+        echo "✓ Silo initialization complete!"
+        mcli ls local/
     env_file: .env
     networks:
       - vidhya-network
 
-  # ═══════════════════════════════════════════════════════════════════
-  # APPLICATION LAYER
-  # ═══════════════════════════════════════════════════════════════════
 
   backend:
     build:
@@ -189,9 +177,6 @@ services:
     networks:
       - vidhya-network
 
-  # ═══════════════════════════════════════════════════════════════════
-  # TELEGRAM BOT
-  # ═══════════════════════════════════════════════════════════════════
 
   bot:
     build:
@@ -208,9 +193,6 @@ services:
     networks:
       - vidhya-network
 
-  # ═══════════════════════════════════════════════════════════════════
-  # FRONTEND
-  # ═══════════════════════════════════════════════════════════════════
 
   frontend:
     build:
@@ -223,12 +205,9 @@ services:
     networks:
       - vidhya-network
 
-  # ═══════════════════════════════════════════════════════════════════
-  # REVERSE PROXY
-  # ═══════════════════════════════════════════════════════════════════
 
   nginx:
-    image: nginx:alpine
+    image: nginx:1.31.8-alpine3.24-slim
     container_name: vidhya-nginx
     restart: unless-stopped
     ports:
@@ -242,9 +221,6 @@ services:
     networks:
       - vidhya-network
 
-# ═══════════════════════════════════════════════════════════════════
-# VOLUMES & NETWORKS
-# ═══════════════════════════════════════════════════════════════════
 
 volumes:
   postgres_data:

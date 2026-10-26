@@ -1,11 +1,13 @@
-"""
-Vidhya Bot — API Client
-Single HTTPX AsyncClient that all handlers use to call the FastAPI backend.
-Handles session injection, SSE streaming, and error translation.
+"""Vidhya Bot — backend API client.
+
+Every user-scoped request authenticates with the user's API key plus the
+server-only bot bridge token. The bridge token prevents those keys from being
+reused by browsers or raw HTTP clients.
 """
 
+import hashlib
+import hmac
 import json
-import logging
 from typing import AsyncGenerator, Optional
 
 import httpx
@@ -13,195 +15,172 @@ import httpx
 from config import get_settings
 
 settings = get_settings()
-logger = logging.getLogger("vidhya.api")
 
-# Shared client — created once, reused across all requests
+_BOT_CONTEXT = b"vidhya:internal:telegram-bot:v1"
+_BOT_TOKEN = hmac.new(
+    settings.SECRET_KEY.encode("utf-8"), _BOT_CONTEXT, hashlib.sha256
+).hexdigest()
+
 _client: Optional[httpx.AsyncClient] = None
 
 
 def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(
-            base_url=settings.BACKEND_URL,
-            timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0),
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-        )
+        _client = httpx.AsyncClient(base_url=settings.BACKEND_URL, timeout=60.0)
     return _client
 
 
-async def close_client():
+async def close_client() -> None:
     global _client
     if _client and not _client.is_closed:
         await _client.aclose()
         _client = None
 
 
-# ── Auth Helpers ──────────────────────────────────────────────────────────────
+def _headers(api_key: str) -> dict:
+    return {
+        "X-API-Key": api_key,
+        "X-Bot-Token": _BOT_TOKEN,
+    }
 
-async def telegram_login(init_data: str) -> dict:
-    """Register/login Telegram user. Returns {session_token, user_id, is_new_user, plan_name}."""
-    client = get_client()
-    resp = await client.post(
-        "/api/v1/auth/telegram/login",
-        json={"init_data": init_data}
+
+
+async def get_platform_config() -> dict:
+    resp = await get_client().get("/api/v1/config/public")
+    resp.raise_for_status()
+    return resp.json()
+
+
+
+async def get_me(api_key: str) -> dict:
+    resp = await get_client().get("/api/v1/auth/me", headers=_headers(api_key))
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def link_api_key(api_key: str, telegram_id: int) -> dict:
+    resp = await get_client().post(
+        "/api/v1/auth/api-key/link",
+        json={"telegram_id": telegram_id},
+        headers=_headers(api_key),
     )
     resp.raise_for_status()
-    # CRITICAL: Clear cookie jar to prevent cross-user session leaks.
-    # The backend's Set-Cookie response would otherwise persist in the
-    # shared client and override other users' Authorization headers.
-    client.cookies.clear()
     return resp.json()
 
 
-# ── Subscription ──────────────────────────────────────────────────────────────
 
-async def activate_free_plan(session_token: str) -> dict:
-    client = get_client()
-    resp = await client.post(
-        "/api/v1/subscriptions/free/activate",
-        headers={"Authorization": f"Bearer {session_token}"}
-    )
-    client.cookies.clear()  # Prevent cookie jar contamination
-    if resp.status_code == 409:
-        return {"already_active": True}
-    resp.raise_for_status()
-    return resp.json()
-
-
-async def get_my_subscription(session_token: str) -> dict:
-    client = get_client()
-    resp = await client.get(
-        "/api/v1/subscriptions/me",
-        headers={"Authorization": f"Bearer {session_token}"}
-    )
-    client.cookies.clear()
-    resp.raise_for_status()
-    return resp.json()
-
-
-# ── Plans ─────────────────────────────────────────────────────────────────────
-
-async def get_plans() -> list:
-    resp = await get_client().get("/api/v1/plans/")
-    resp.raise_for_status()
-    return resp.json()
-
-
-# ── AI Quota ──────────────────────────────────────────────────────────────────
-
-async def get_ai_quota(session_token: str) -> dict:
-    client = get_client()
-    resp = await client.get(
-        "/api/v1/ai/quota",
-        headers={"Authorization": f"Bearer {session_token}"}
-    )
-    client.cookies.clear()
-    resp.raise_for_status()
-    return resp.json()
-
-
-# ── Conversations ─────────────────────────────────────────────────────────────
-
-async def create_conversation(session_token: str, title: str = "Chat") -> dict:
-    client = get_client()
-    resp = await client.post(
+async def create_conversation(api_key: str, title: Optional[str] = None) -> dict:
+    resp = await get_client().post(
         "/api/v1/conversations/",
-        headers={"Authorization": f"Bearer {session_token}"},
-        json={"title": title}
+        json={"title": title},
+        headers=_headers(api_key),
     )
-    client.cookies.clear()
     resp.raise_for_status()
     return resp.json()
 
 
-async def list_conversations(session_token: str) -> list:
-    client = get_client()
-    resp = await client.get(
-        "/api/v1/conversations/",
-        headers={"Authorization": f"Bearer {session_token}"}
+async def list_conversations(api_key: str) -> list:
+    resp = await get_client().get(
+        "/api/v1/conversations/?page=1&page_size=50",
+        headers=_headers(api_key),
     )
-    client.cookies.clear()
     resp.raise_for_status()
     return resp.json()
 
 
-async def close_conversation(session_token: str, conv_id: str) -> dict:
-    client = get_client()
-    resp = await client.post(
-        f"/api/v1/conversations/{conv_id}/close",
-        headers={"Authorization": f"Bearer {session_token}"}
+async def get_conversation(api_key: str, conv_id: str) -> dict:
+    resp = await get_client().get(
+        f"/api/v1/conversations/{conv_id}", headers=_headers(api_key)
     )
-    client.cookies.clear()
-    resp.raise_for_status()
-    return resp.json()
-
-async def delete_conversation(session_token: str, conv_id: str) -> dict:
-    client = get_client()
-    resp = await client.delete(
-        f"/api/v1/conversations/{conv_id}",
-        headers={"Authorization": f"Bearer {session_token}"}
-    )
-    client.cookies.clear()
     resp.raise_for_status()
     return resp.json()
 
 
-# ── Payment ───────────────────────────────────────────────────────────────────
-
-async def initiate_payment(session_token: str, plan_id: str, amount_paise: int) -> dict:
-    client = get_client()
-    resp = await client.post(
-        "/api/v1/payments/initiate",
-        headers={"Authorization": f"Bearer {session_token}"},
-        json={"plan_id": plan_id, "amount": amount_paise}
+async def delete_conversation(api_key: str, conv_id: str) -> dict:
+    resp = await get_client().delete(
+        f"/api/v1/conversations/{conv_id}", headers=_headers(api_key)
     )
-    client.cookies.clear()
     resp.raise_for_status()
     return resp.json()
 
 
-# ── AI SSE Stream ─────────────────────────────────────────────────────────────
+
+async def get_ai_quota(api_key: str) -> dict:
+    resp = await get_client().get("/api/v1/ai/quota", headers=_headers(api_key))
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def get_my_subscription(api_key: str) -> dict:
+    resp = await get_client().get(
+        "/api/v1/subscriptions/me", headers=_headers(api_key)
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 
 async def stream_ai_response(
-    session_token: str,
-    message: str,
-    conversation_id: str,
-) -> AsyncGenerator[str, None]:
+    api_key: str, message: str, conversation_id: Optional[str]
+) -> AsyncGenerator[dict, None]:
     """
-    Streams SSE token events from the backend AI chat endpoint.
-    Yields individual token strings as they arrive.
+    Yield dicts:
+      {"type": "token", "text": "..."}
+      {"type": "error", "code": "context_limit"|..., "detail": "..."}
+      {"type": "metadata", "conversation_id": "..."}
+      {"type": "done"}
     """
-    client = get_client()
-    async with client.stream(
+    payload = {"message": message}
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+
+    async with get_client().stream(
         "POST",
         "/api/v1/ai/chat/stream",
-        headers={
-            "Authorization": f"Bearer {session_token}",
-            "Accept": "text/event-stream",
-        },
-        json={"message": message, "conversation_id": conversation_id},
-        timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=5.0),
-    ) as response:
-        if response.is_error:
-            await response.aread()
-        response.raise_for_status()
-        async for line in response.aiter_lines():
-            if not line:
-                continue
-            if line.startswith("data: "):
-                raw = line[6:]
+        json=payload,
+        headers=_headers(api_key),
+    ) as resp:
+        if resp.status_code >= 400:
+            body = await resp.aread()
+            detail = "Request failed."
+            try:
+                detail = json.loads(body).get("detail", detail)
+            except Exception:
+                pass
+            yield {
+                "type": "error",
+                "code": "http",
+                "status": resp.status_code,
+                "detail": detail,
+            }
+            return
+
+        event = None
+        async for line in resp.aiter_lines():
+            if line.startswith("event:"):
+                event = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                raw = line.split(":", 1)[1].strip()
                 try:
                     data = json.loads(raw)
-                    token = data.get("token")
-                    if token:
-                        yield token
-                    # Stop on done event
-                    if data.get("status") == "completed":
-                        return
-                    # Propagate errors
-                    if "detail" in data:
-                        yield f"\n\n⚠️ {data['detail']}"
-                        return
                 except Exception:
-                    pass
+                    continue
+
+                if event == "token":
+                    yield {"type": "token", "text": data.get("token", "")}
+                elif event == "error":
+                    yield {
+                        "type": "error",
+                        "code": data.get("code"),
+                        "detail": data.get("detail", "AI error."),
+                    }
+                    return
+                elif event == "metadata":
+                    yield {
+                        "type": "metadata",
+                        "conversation_id": data.get("conversation_id"),
+                    }
+                elif event == "done":
+                    yield {"type": "done"}
+                    return

@@ -1,7 +1,7 @@
 """
 Vidhya Bot — Document Chunk Model
 
-Chunked text from PDFs with 768-dimensional vector embeddings (nomic-embed-text)
+Chunked text from PDFs with vector embeddings from the active embedding model,
 for RAG similarity search via pgvector HNSW index.
 """
 
@@ -20,18 +20,10 @@ from app.models.base import UUIDPrimaryKeyMixin
 if TYPE_CHECKING:
     from app.models.document import Document
 
-from app.config import get_settings
-
-settings = get_settings()
-
-# Dimension comes from config (1024 for Mistral, 1536 for OpenAI, 768 for Nomic)
-EMBEDDING_DIMENSIONS = settings.EMBEDDING_DIMENSIONS
-
 
 class DocumentChunk(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "document_chunks"
 
-    # ── Foreign Keys ──────────────────────────────────────────────
     document_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("documents.id", ondelete="CASCADE"),
@@ -39,19 +31,21 @@ class DocumentChunk(Base, UUIDPrimaryKeyMixin):
         index=True,
     )
 
-    # ── Chunk Content ─────────────────────────────────────────────
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
     )
 
-    # ── Embedding (768d — nomic-embed-text) ───────────────────────
-    embedding = mapped_column(
-        Vector(EMBEDDING_DIMENSIONS), nullable=True
+    # The column dimension is defined in the database schema (vector(1024)).
+    embedding = mapped_column(Vector(), nullable=True)
+    embedding_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("ai_embedding_models.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
-    # ── Metadata ──────────────────────────────────────────────────
     page_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     section_title: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True
@@ -60,12 +54,10 @@ class DocumentChunk(Base, UUIDPrimaryKeyMixin):
         "metadata", JSONB, default=dict, server_default="{}"
     )
 
-    # ── Timestamps ────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
 
-    # ── Relationships ─────────────────────────────────────────────
     document: Mapped["Document"] = relationship(back_populates="chunks")
 
     def __repr__(self) -> str:

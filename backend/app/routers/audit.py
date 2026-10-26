@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Audit Logs Router                                  ║
-║  Provides: Admin endpoints to view system audit logs.            ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 from typing import List
 
 from fastapi import APIRouter, Depends, status
@@ -33,7 +26,6 @@ async def list_audit_logs(
     """
     offset = (pagination.page - 1) * pagination.page_size
     
-    # Query AuditLogs and join with Admin to get the username
     stmt = (
         select(AuditLog, Admin.username)
         .outerjoin(Admin, AuditLog.admin_id == Admin.id)
@@ -45,7 +37,6 @@ async def list_audit_logs(
     result = await db.execute(stmt)
     rows = result.all()
     
-    # Get total count
     count_stmt = select(sqlalchemy.func.count()).select_from(AuditLog)
     total_result = await db.execute(count_stmt)
     total_count = total_result.scalar() or 0

@@ -19,13 +19,14 @@ class MessageResponse(VidhyaBaseModel):
     confidence_score: Optional[float] = None
     was_cached: bool = False
     is_in_context: bool = True
+    is_summarized: bool = False
     created_at: datetime
+    sources: Optional[List[dict]] = None  # RAG chunk references
 
 
 class MessageWithRAG(MessageResponse):
     """Message with RAG retrieval details (for debugging/admin)."""
     retrieved_chunks: Optional[dict] = None
-    is_summarized: bool = False
 
 
 class MessageListResponse(BaseModel):

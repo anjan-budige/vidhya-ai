@@ -1,13 +1,5 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Subscriptions Router                               ║
-║  Provides: User subscription details, free tier activations,     ║
-║  and admin-only user monitoring checks.                          ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List
 
 import redis.asyncio as aioredis
@@ -20,8 +12,10 @@ from app.dependencies import (
     get_redis_client,
     get_current_user,
     get_current_admin,
-    require_admin_or_above
+    require_admin_or_above,
+    require_billing_enabled,
 )
+from app.services.platform import FREE, PlatformConfigService
 from app.models.subscription import UserSubscription
 from app.models.conversation import Conversation
 from app.models.usage_tracking import UsageTracking
@@ -63,15 +57,19 @@ async def get_my_subscription(
         sub = await SubscriptionService.activate_free_plan(current_user.id, db, redis)
         await db.commit()
         
-    # 2. Get active limits
-    limits = sub.plan_snapshot
+    # 2. Active limits — in Free mode the free plan is the platform's limits
+    mode = await PlatformConfigService.get_mode(db, redis)
+    if mode == FREE:
+        limits = await PlatformConfigService.get_free_limits(db, redis)
+    else:
+        limits = sub.plan_snapshot
     
-    # 3. Read current period message usage (Quota checks)
-    today = date.today()
+    # 3. Read current period message usage (same IST windows as the quota engine)
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(ist_tz).date()
     today_str = today.strftime("%Y-%m-%d")
     month_str = today.strftime("%Y-%m")
     
-    # Fast path check on Redis daily counter
     from app.redis_client import RedisKeys
     daily_key = RedisKeys.quota_daily(str(current_user.id), today_str)
     daily_val = await redis.get(daily_key)
@@ -88,7 +86,6 @@ async def get_my_subscription(
         db_record = db_result.scalar_one_or_none()
         daily_used = db_record.messages_used if db_record else 0
         
-    # Fast path check on Redis monthly counter
     monthly_key = RedisKeys.quota_monthly(str(current_user.id), month_str)
     monthly_val = await redis.get(monthly_key)
     if monthly_val is not None:
@@ -105,13 +102,13 @@ async def get_my_subscription(
         db_record = db_result.scalar_one_or_none()
         monthly_used = db_record.messages_used if db_record else 0
         
-    # 4. Count active conversations
+    # 4. Count saved sessions
     conv_result = await db.execute(
-        select(func.count(Conversation.id))
-        .where(Conversation.user_id == current_user.id)
-        .where(Conversation.status == "active")
+        select(func.count(Conversation.id)).where(
+            Conversation.user_id == current_user.id
+        )
     )
-    active_conversations_count = conv_result.scalar() or 0
+    sessions_used = conv_result.scalar() or 0
     
     return SubscriptionWithUsage(
         id=sub.id,
@@ -131,8 +128,8 @@ async def get_my_subscription(
         daily_messages_limit=limits.get("messages_per_day", 5),
         monthly_messages_used=monthly_used,
         monthly_messages_limit=limits.get("messages_per_month", 50),
-        active_conversations=active_conversations_count,
-        max_active_conversations=limits.get("max_active_conversations", 1),
+        sessions_used=sessions_used,
+        max_sessions=limits.get("max_sessions", 5),
         plan_name=limits.get("plan_name", "free"),
         plan_display_name=limits.get("display_name", "Free Plan")
     )
@@ -148,7 +145,6 @@ async def activate_free_tier(
     Manually activate the default free plan tier.
     Valid only if the user has no existing active subscriptions.
     """
-    # Check if user already has an active subscription
     check_result = await db.execute(
         select(UserSubscription)
         .where(UserSubscription.user_id == current_user.id)
@@ -177,7 +173,6 @@ async def get_user_subscription_admin(
     """
     Retrieve specific user active subscription limits (Admin only).
     """
-    # Verify user exists
     user_check = await db.execute(select(User).where(User.id == user_id))
     user = user_check.scalar_one_or_none()
     if not user:
@@ -221,7 +216,8 @@ async def admin_assign_subscription(
     payload: AssignPlanRequest,
     current_admin: CurrentAdmin = Depends(require_admin_or_above),
     db: AsyncSession = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis_client)
+    redis: aioredis.Redis = Depends(get_redis_client),
+    _billing_enabled: None = Depends(require_billing_enabled),
 ):
     """
     Manually assign a plan to a user (Admin only).
@@ -233,7 +229,6 @@ async def admin_assign_subscription(
         redis=redis
     )
     
-    # Audit Logging
     db.add(AuditLog(
         admin_id=current_admin.id,
         action="subscription.assigned",

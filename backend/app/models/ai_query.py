@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 class AIQuery(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "ai_queries"
 
-    # ── Foreign Keys ──────────────────────────────────────────────
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -44,11 +43,9 @@ class AIQuery(Base, UUIDPrimaryKeyMixin):
         nullable=True,
     )
 
-    # ── Query / Response ──────────────────────────────────────────
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     response_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # ── RAG Details ───────────────────────────────────────────────
     chunks_retrieved: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
     )
@@ -56,7 +53,6 @@ class AIQuery(Base, UUIDPrimaryKeyMixin):
         Float, nullable=True
     )
 
-    # ── Token Usage ───────────────────────────────────────────────
     tokens_input: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
     )
@@ -67,7 +63,6 @@ class AIQuery(Base, UUIDPrimaryKeyMixin):
         Integer, default=0, server_default="0"
     )
 
-    # ── Performance ───────────────────────────────────────────────
     response_time_ms: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True
     )
@@ -78,7 +73,6 @@ class AIQuery(Base, UUIDPrimaryKeyMixin):
         Boolean, default=False, server_default="false"
     )
 
-    # ── Timestamp ─────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False, index=True
     )

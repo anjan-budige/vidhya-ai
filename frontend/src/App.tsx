@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useEffect } from 'react';
 import { Toaster } from 'react-hot-toast';
 import Landing from './pages/Landing';
 import AdminLogin from './pages/admin/AdminLogin';
@@ -12,31 +11,35 @@ import AdminPlans from './pages/admin/AdminPlans';
 import AdminPayments from './pages/admin/AdminPayments';
 import AdminSystemStatus from './pages/admin/AdminSystemStatus';
 import AdminSettings from './pages/admin/AdminSettings';
-import AdminApiSettings from './pages/admin/AdminApiSettings';
+import AdminAiProviders from './pages/admin/AdminAiProviders';
 import AdminAuditLogs from './pages/admin/AdminAuditLogs';
-import UserDashboard from './pages/user/UserDashboard';
+import Chat from './pages/user/ChatApp';
+import UserPlans from './pages/user/UserPlans';
+import UserApiKeys from './pages/user/UserApiKeys';
+import UserSettings from './pages/user/UserSettings';
 import PaymentStatus from './pages/user/PaymentStatus';
+import UserLogin from './pages/auth/UserLogin';
+import UserRegister from './pages/auth/UserRegister';
+import VerifyEmail from './pages/auth/VerifyEmail';
+import UserForgotPassword from './pages/auth/UserForgotPassword';
+import UserResetPassword from './pages/auth/UserResetPassword';
 import AdminLayout from './components/admin/AdminLayout';
-import UserLayout from './components/user/UserLayout';
-import twa from '@twa-dev/sdk';
+import UserLayout from './components/user/UserAppLayout';
+import { UserProvider } from './contexts/UserContext';
+
+function UserApp() {
+  return (
+    <UserProvider>
+      <UserLayout />
+    </UserProvider>
+  );
+}
 
 function App() {
-
-  useEffect(() => {
-    // Signal Telegram WebApp is ready (if in Telegram environment)
-    try {
-      const win = window as any;
-      if (win.Telegram?.WebApp?.ready) win.Telegram.WebApp.ready();
-      if (win.Telegram?.WebApp?.expand) win.Telegram.WebApp.expand();
-    } catch {}
-    try { twa.ready(); } catch {}
-    try { twa.expand(); } catch {}
-  }, []);
-
   return (
     <BrowserRouter>
-      <Toaster 
-        position="top-right" 
+      <Toaster
+        position="top-right"
         toastOptions={{
           duration: 4000,
           style: {
@@ -61,13 +64,17 @@ function App() {
         }}
       />
       <Routes>
-        {/* Public Routes */}
         <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<UserLogin />} />
+        <Route path="/register" element={<UserRegister />} />
+        <Route path="/verify-email" element={<VerifyEmail />} />
+        <Route path="/forgot-password" element={<UserForgotPassword />} />
+        <Route path="/reset-password" element={<UserResetPassword />} />
+        <Route path="/payment/status" element={<PaymentStatus />} />
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin/forgot-password" element={<AdminForgotPassword />} />
         <Route path="/admin/reset-password" element={<AdminResetPassword />} />
 
-        {/* Admin Routes - Wrapped in Layout */}
         <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<Navigate to="/admin/dashboard" replace />} />
           <Route path="dashboard" element={<AdminDashboard />} />
@@ -77,19 +84,23 @@ function App() {
           <Route path="payments" element={<AdminPayments />} />
           <Route path="system-status" element={<AdminSystemStatus />} />
           <Route path="audit-logs" element={<AdminAuditLogs />} />
-          <Route path="api-settings" element={<AdminApiSettings />} />
+          <Route path="ai-providers" element={<AdminAiProviders />} />
           <Route path="settings" element={<AdminSettings />} />
         </Route>
 
-        {/* User Routes - Mini App View */}
-        <Route path="/user" element={<UserLayout />}>
-          <Route index element={<Navigate to="/user/dashboard" replace />} />
-          <Route path="dashboard" element={<UserDashboard />} />
+        <Route element={<UserApp />}>
+          <Route path="/chat/:conversationId?" element={<Chat />} />
+          <Route path="/plans" element={<UserPlans />} />
+          <Route path="/api-keys" element={<UserApiKeys />} />
+          <Route path="/profile" element={<UserSettings />} />
         </Route>
 
-        <Route path="/payment/status" element={<PaymentStatus />} />
+        <Route path="/keys" element={<Navigate to="/api-keys" replace />} />
+        <Route path="/settings" element={<Navigate to="/profile" replace />} />
+        <Route path="/account" element={<Navigate to="/profile" replace />} />
+        <Route path="/user" element={<Navigate to="/chat" replace />} />
+        <Route path="/user/dashboard" element={<Navigate to="/chat" replace />} />
 
-        {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

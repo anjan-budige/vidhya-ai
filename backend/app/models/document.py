@@ -22,24 +22,20 @@ if TYPE_CHECKING:
 class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "documents"
 
-    # ── Foreign Keys ──────────────────────────────────────────────
     admin_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("admins.id"),
         nullable=False,
     )
 
-    # ── File Info ─────────────────────────────────────────────────
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    # ── Storage ───────────────────────────────────────────────────
     s3_key: Mapped[str] = mapped_column(String(500), nullable=False)
     s3_bucket: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    # ── Processing Status ─────────────────────────────────────────
     status: Mapped[str] = mapped_column(
         String(20), default="uploaded", server_default="uploaded", index=True
     )  # uploaded | processing | processed | failed
@@ -57,7 +53,6 @@ class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
-    # ── Metadata ──────────────────────────────────────────────────
     subject: Mapped[Optional[str]] = mapped_column(
         String(100), nullable=True, index=True
     )
@@ -66,12 +61,10 @@ class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # ── Status Flag ───────────────────────────────────────────────
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
 
-    # ── Relationships ─────────────────────────────────────────────
     chunks: Mapped[List["DocumentChunk"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",

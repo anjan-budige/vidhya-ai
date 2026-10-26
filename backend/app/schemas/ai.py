@@ -44,7 +44,8 @@ class AIQuotaResponse(BaseModel):
     daily_remaining: int = 5
     monthly_remaining: int = 50
     active_conversations: int = 0
-    max_active_conversations: int = 1
+    sessions_used: int = 0
+    max_sessions: int = 5
     plan_name: str = "free"
     next_daily_reset: Optional[datetime] = None
 

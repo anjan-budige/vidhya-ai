@@ -12,12 +12,28 @@ from app.utils.request import get_client_ip
 
 settings = get_settings()
 
+# Only credential endpoints get the tight login budget. Reading the current
+# session (/auth/me), the CSRF token and logging out must not compete with it.
+CREDENTIAL_PATHS = {
+    "/api/v1/auth/login",
+    "/api/v1/auth/login/verify-otp",
+    "/api/v1/auth/register",
+    "/api/v1/auth/verify-email",
+    "/api/v1/auth/resend-otp",
+    "/api/v1/auth/forgot-password",
+    "/api/v1/auth/reset-password",
+    "/api/v1/auth/change-password",
+    "/api/v1/auth/admin/login",
+    "/api/v1/auth/admin/totp/verify",
+    "/api/v1/auth/admin/forgot-password",
+    "/api/v1/auth/admin/reset-password",
+}
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         
-        # Determine limits based on path
         limit = None
         window_sec = 60
         quota_type = "general"
@@ -25,7 +41,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path.startswith("/api/v1/ai"):
             limit = settings.RATE_LIMIT_AI_PER_MINUTE
             quota_type = "ai"
-        elif path.startswith("/api/v1/auth"):
+        elif path in CREDENTIAL_PATHS:
             limit = settings.RATE_LIMIT_LOGIN_PER_MINUTE
             quota_type = "auth"
         elif path.startswith("/api/v1/documents/upload"):
@@ -55,21 +71,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 except Exception:
                     pass
             
-            # Redis Sliding Window Rate Limit
             key = f"ratelimit:{quota_type}:{identifier}"
             current_time = time.time()
             window_start = current_time - window_sec
             
             try:
-                # Use a pipeline for atomicity
                 async with redis_client.pipeline() as pipe:
-                    # Remove older timestamps
                     pipe.zremrangebyscore(key, 0, window_start)
-                    # Count existing timestamps in window
                     pipe.zcard(key)
-                    # Add current timestamp
                     pipe.zadd(key, {str(uuid.uuid4()): current_time})
-                    # Set expiry to prevent key buildup
                     pipe.expire(key, window_sec)
                     
                     results = await pipe.execute()
@@ -89,5 +99,4 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 from app.main import logger
                 logger.error(f"RateLimiter Redis Error: {e}")
 
-        # Continue request
         return await call_next(request)

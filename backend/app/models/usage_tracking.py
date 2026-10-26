@@ -27,7 +27,6 @@ class UsageTracking(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UniqueConstraint("user_id", "period_type", "period_date", name="uq_usage_user_period"),
     )
 
-    # ── Foreign Keys ──────────────────────────────────────────────
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -40,7 +39,6 @@ class UsageTracking(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=True,
     )
 
-    # ── Period ────────────────────────────────────────────────────
     period_type: Mapped[str] = mapped_column(
         String(10), nullable=False
     )  # 'daily' | 'monthly'
@@ -48,7 +46,6 @@ class UsageTracking(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Date, nullable=False
     )  # e.g. 2024-05-28 or 2024-05-01
 
-    # ── Counters ──────────────────────────────────────────────────
     messages_used: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
     )
@@ -62,7 +59,6 @@ class UsageTracking(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Integer, default=0, server_default="0"
     )
 
-    # ── Relationships ─────────────────────────────────────────────
     user: Mapped["User"] = relationship(back_populates="usage_records")
     subscription: Mapped[Optional["UserSubscription"]] = relationship(
         back_populates="usage_records"

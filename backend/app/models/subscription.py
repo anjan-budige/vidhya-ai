@@ -18,7 +18,7 @@ from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.conversation import Conversation
-    from app.models.payment import Payment
+    from app.models.payment import PaymentOrder
     from app.models.plan import Plan
     from app.models.usage_tracking import UsageTracking
     from app.models.user import User
@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 class UserSubscription(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "user_subscriptions"
 
-    # ── Foreign Keys ──────────────────────────────────────────────
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -41,16 +40,14 @@ class UserSubscription(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     payment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("payments.id"),
+        ForeignKey("payment_orders.id"),
         nullable=True,
     )
 
-    # ── Status ────────────────────────────────────────────────────
     status: Mapped[str] = mapped_column(
         String(20), default="active", server_default="active", index=True
     )  # active | expired | cancelled | paused
 
-    # ── Validity ──────────────────────────────────────────────────
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
@@ -58,10 +55,8 @@ class UserSubscription(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
-    # ── Plan Snapshot (immutable after purchase) ──────────────────
     plan_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
-    # ── Lifetime Usage Counters ───────────────────────────────────
     total_messages_used: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
     )
@@ -72,10 +67,9 @@ class UserSubscription(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Integer, default=0, server_default="0"
     )
 
-    # ── Relationships ─────────────────────────────────────────────
     user: Mapped["User"] = relationship(back_populates="subscriptions")
     plan: Mapped["Plan"] = relationship(back_populates="subscriptions")
-    payment: Mapped[Optional["Payment"]] = relationship(
+    payment: Mapped[Optional["PaymentOrder"]] = relationship(
         back_populates="subscription"
     )
     conversations: Mapped[list["Conversation"]] = relationship(
@@ -116,13 +110,10 @@ class UserSubscription(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         return self.plan_snapshot.get("messages_per_month", 50)
 
     @property
-    def max_active_conversations(self) -> int:
-        return self.plan_snapshot.get("max_active_conversations", 1)
+    def max_sessions(self) -> int:
+        return self.plan_snapshot.get("max_sessions", 5)
 
     @property
-    def max_context_messages(self) -> int:
-        return self.plan_snapshot.get("max_context_messages", 5)
-
     @property
     def max_context_tokens(self) -> int:
         return self.plan_snapshot.get("max_context_tokens", 2000)

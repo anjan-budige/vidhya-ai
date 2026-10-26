@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — FastAPI Dependencies (Dependency Injection)        ║
-║  Provides: DB sessions, Redis, current user/admin, pagination   ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import uuid
 from typing import AsyncGenerator, Optional
 
@@ -22,18 +15,12 @@ from app.schemas.auth import CurrentAdmin, CurrentUser
 from app.schemas.base import PaginationParams
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Settings Dependency
-# ═══════════════════════════════════════════════════════════════════
 
 def get_app_settings() -> Settings:
     """Provide cached settings instance."""
     return get_settings()
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Database Session
-# ═══════════════════════════════════════════════════════════════════
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
@@ -55,18 +42,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Redis Client
-# ═══════════════════════════════════════════════════════════════════
 
 async def get_redis_client() -> aioredis.Redis:
     """Provide the Redis client."""
     return redis_client
 
 
-# ═══════════════════════════════════════════════════════════════════
-# User Authentication
-# ═══════════════════════════════════════════════════════════════════
 
 async def get_session_token(
     request: Request,
@@ -78,7 +59,6 @@ async def get_session_token(
     httpx client accumulates cookies from all users' login responses, causing
     cross-user session leaks if cookies are checked first.
     """
-    # Check Authorization header FIRST (for API clients / bot)
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         return auth_header[7:]
@@ -93,23 +73,46 @@ async def get_session_token(
     )
 
 
+def _token_from_request(
+    request: Request, cookie: Optional[str]
+) -> Optional[str]:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+    return cookie
+
+
 async def get_current_user(
-    session_token: str = Depends(get_session_token),
+    request: Request,
+    vidhya_session: Optional[str] = Cookie(default=None),
     redis: aioredis.Redis = Depends(get_redis_client),
     db: AsyncSession = Depends(get_db),
 ) -> CurrentUser:
     """
-    Validate session token and return the current user.
-    Checks Redis first, falls back to DB.
-    
-    Raises:
-        401: Invalid or expired session
-        403: User is banned or inactive
+    Resolve the caller from an X-API-Key header, a Bearer token, or the
+    session cookie. API keys are checked first so bot traffic never needs
+    a cookie jar.
     """
-    # Check session in Redis
-    session_key = RedisKeys.session(session_token)
-    session_data = await redis.hgetall(session_key)
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        from app.services.api_keys import ApiKeyService
+        from app.utils.internal_auth import is_telegram_bot_request
 
+        if not is_telegram_bot_request(request.headers):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API keys are accepted only from the connected Telegram bot.",
+            )
+        return await ApiKeyService.authenticate(db, redis, api_key)
+
+    token = _token_from_request(request, vidhya_session)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. No session token provided.",
+        )
+
+    session_data = await redis.hgetall(RedisKeys.session(token))
     if not session_data:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -123,11 +126,9 @@ async def get_current_user(
             detail="Invalid session data.",
         )
 
-    # Load user from DB
-    result = await db.execute(
-        select(User).where(User.id == uuid.UUID(user_id))
-    )
-    user = result.scalar_one_or_none()
+    user = (
+        await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    ).scalar_one_or_none()
 
     if not user:
         raise HTTPException(
@@ -150,9 +151,14 @@ async def get_current_user(
     return CurrentUser(
         id=user.id,
         telegram_id=user.telegram_id,
+        username=user.username,
+        email=user.email,
+        mobile=user.mobile,
         first_name=user.first_name,
         last_name=user.last_name,
         telegram_username=user.telegram_username,
+        auth_provider=user.auth_provider,
+        email_verified_at=user.email_verified_at,
         is_active=user.is_active,
         is_banned=user.is_banned,
     )
@@ -168,12 +174,19 @@ async def get_current_user_optional(
     Like get_current_user but returns None if not authenticated.
     Used for endpoints that work with or without auth.
     """
-    token = vidhya_session
-    if not token:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        try:
+            from app.services.api_keys import ApiKeyService
+            from app.utils.internal_auth import is_telegram_bot_request
 
+            if not is_telegram_bot_request(request.headers):
+                return None
+            return await ApiKeyService.authenticate(db, redis, api_key)
+        except HTTPException:
+            return None
+
+    token = _token_from_request(request, vidhya_session)
     if not token:
         return None
 
@@ -193,9 +206,14 @@ async def get_current_user_optional(
         return CurrentUser(
             id=user.id,
             telegram_id=user.telegram_id,
+            username=user.username,
+            email=user.email,
+            mobile=user.mobile,
             first_name=user.first_name,
             last_name=user.last_name,
             telegram_username=user.telegram_username,
+            auth_provider=user.auth_provider,
+            email_verified_at=user.email_verified_at,
             is_active=user.is_active,
             is_banned=user.is_banned,
         )
@@ -203,9 +221,6 @@ async def get_current_user_optional(
         return None
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Admin Authentication
-# ═══════════════════════════════════════════════════════════════════
 
 async def get_admin_session_token(
     request: Request,
@@ -251,6 +266,14 @@ async def get_current_admin(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin session.",
+        )
+
+    # Password verification alone must never authorize an admin when TOTP is
+    # enabled. The pre-auth token is valid only for /admin/totp/verify.
+    if session_data.get("is_pre_auth") != "false":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Complete two-factor verification to continue.",
         )
 
     result = await db.execute(
@@ -308,9 +331,26 @@ async def require_admin_or_above(
     return admin
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Pagination
-# ═══════════════════════════════════════════════════════════════════
+
+async def require_billing_enabled(
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Block billing mutations while the platform is in Free mode.
+
+    Reads from Postgres (not the Redis cache) so a stale cache can never
+    let a request through after the mode has been switched.
+    """
+    from app.services.platform import PAID, PlatformConfigService
+
+    mode = await PlatformConfigService.get_mode_fresh(db)
+    if mode != PAID:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Billing is disabled on this platform (Free mode).",
+        )
+
+
 
 def get_pagination(page: int = 1, page_size: int = 20) -> PaginationParams:
     """Parse pagination query params."""

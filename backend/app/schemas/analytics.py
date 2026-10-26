@@ -13,7 +13,6 @@ class DashboardStats(BaseModel):
     total_users: int = 0
     active_users_today: int = 0
     total_conversations: int = 0
-    active_conversations: int = 0
     total_messages_today: int = 0
     total_tokens_today: int = 0
     total_revenue: float = 0.0
@@ -48,7 +47,6 @@ class RAGAnalytics(BaseModel):
 class ConversationAnalytics(BaseModel):
     """Conversation analytics."""
     total_conversations: int
-    active_conversations: int
     avg_messages_per_conversation: float
     avg_conversation_duration_min: float
     timeout_rate: float

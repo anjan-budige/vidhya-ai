@@ -1,15 +1,8 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Authentication Router                              ║
-║  Provides: Telegram WebApp login, Admin password verification,   ║
-║  lockout security, and TOTP 2FA step verification.               ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import base64
+import secrets
 from io import BytesIO
 
 from app.utils.request import get_client_ip
@@ -28,10 +21,8 @@ from app.dependencies import (
     require_admin_or_above
 )
 from app.redis_client import RedisKeys
-from app.services.auth import TelegramAuthService, AdminAuthService
+from app.services.auth import AdminAuthService
 from app.schemas.auth import (
-    TelegramLoginRequest,
-    LoginResponse,
     AdminLoginRequest,
     AdminLoginResponse,
     AdminTOTPVerify,
@@ -49,59 +40,20 @@ settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.post("/telegram/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
-async def telegram_login(
-    payload: TelegramLoginRequest,
-    request: Request,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis_client)
-):
-    """
-    Authenticate user via Telegram WebApp initData.
-    Sets the session token in a secure HttpOnly cookie and returns login details.
-    """
-    ip_address = get_client_ip(request)
-    device_info = {
-        "user_agent": request.headers.get("user-agent"),
-        "accept_language": request.headers.get("accept-language")
-    }
-    
-    # Call service layer
-    user, session_token, expires_at, is_new_user = await TelegramAuthService.authenticate_user(
-        init_data=payload.init_data,
-        db=db,
-        redis=redis,
-        ip_address=ip_address,
-        device_info=device_info
-    )
-    
-    # Retrieve user's subscription tier name
-    from app.services.quota import QuotaService
-    limits = await QuotaService.get_active_subscription_limits(user.id, db, redis)
-    plan_name = limits.get("plan_name", "free")
-    
-    # Set Cookie
+@router.get("/csrf", status_code=status.HTTP_200_OK)
+async def csrf_token(request: Request, response: Response):
+    """Return the CSRF token and make sure the double-submit cookie exists."""
+    token = request.cookies.get("csrf_token") or secrets.token_urlsafe(32)
     response.set_cookie(
-        key=settings.SESSION_COOKIE_NAME,
-        value=session_token,
-        expires=expires_at,
-        path="/",
-        domain=None,
+        key="csrf_token",
+        value=token,
+        httponly=False,
         secure=settings.SESSION_COOKIE_SECURE,
-        httponly=settings.SESSION_COOKIE_HTTPONLY,
-        samesite=settings.SESSION_COOKIE_SAMESITE
+        samesite=settings.SESSION_COOKIE_SAMESITE,
+        max_age=86400 * 7,
+        path="/",
     )
-    
-    await db.commit()
-    
-    return LoginResponse(
-        user_id=user.id,
-        session_token=session_token,
-        expires_at=expires_at,
-        is_new_user=is_new_user,
-        plan_name=plan_name
-    )
+    return {"csrf_token": token}
 
 
 @router.post("/admin/login", response_model=AdminLoginResponse, status_code=status.HTTP_200_OK)
@@ -118,7 +70,6 @@ async def admin_login(
     """
     ip_address = get_client_ip(request)
     
-    # Call service layer
     admin, session_token, requires_totp, expires_at = await AdminAuthService.authenticate_admin(
         username=payload.username,
         password=payload.password,
@@ -139,7 +90,6 @@ async def admin_login(
             samesite="Strict"
         )
         
-        # Audit Logging
         db.add(AuditLog(
             admin_id=admin.id,
             action="admin.login",
@@ -178,7 +128,6 @@ async def admin_totp_verify(
         redis=redis
     )
     
-    # Set Cookie
     response.set_cookie(
         key="vidhya_admin_session",
         value=new_token,
@@ -189,7 +138,6 @@ async def admin_totp_verify(
         samesite="Strict"
     )
     
-    # Audit Logging
     db.add(AuditLog(
         admin_id=admin.id,
         action="admin.login_totp",
@@ -245,7 +193,6 @@ async def admin_totp_setup(
     )
     await db.commit()
     
-    # Generate QR Code image (base64)
     qr = qrcode.make(uri)
     buffered = BytesIO()
     qr.save(buffered)
@@ -375,7 +322,6 @@ async def logout(
         
     if vidhya_admin_session:
         admin_session_key = RedisKeys.admin_session(vidhya_admin_session)
-        # Try to get admin id before deleting session
         try:
             from app.dependencies import get_current_admin_from_token
             admin_data = await redis.get(admin_session_key)
@@ -420,7 +366,6 @@ async def admin_forgot_password(
         reset_link = f"{settings.APP_URL}/admin/reset-password?token={token}"
         await send_reset_password_email(payload.email, reset_link)
         
-    # Always return success to prevent email enumeration
     return {"status": "success", "message": "If the email exists, a reset link has been sent."}
 
 @router.post("/admin/reset-password", status_code=status.HTTP_200_OK)
@@ -457,7 +402,8 @@ async def admin_update_password(
     payload: AdminUpdatePasswordRequest,
     request: Request,
     current_admin: CurrentAdmin = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis_client),
 ):
     """
     Update password for an authenticated admin.
@@ -467,7 +413,8 @@ async def admin_update_password(
         admin_id=current_admin.id,
         current_password=payload.current_password,
         new_password=payload.new_password,
-        db=db
+        db=db,
+        redis=redis,
     )
     db.add(AuditLog(
         admin_id=current_admin.id,

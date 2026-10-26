@@ -1,11 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Conversations Router                               ║
-║  Provides: Creation of chat threads, paginated listings, context  ║
-║  checks, and closure controls.                                   ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import uuid
 from datetime import datetime, timezone
 from typing import List
@@ -27,7 +19,8 @@ from app.services.conversation import ConversationService
 from app.schemas.conversation import (
     ConversationCreateRequest,
     ConversationResponse,
-    ConversationListResponse
+    ConversationListResponse,
+    ConversationUpdateRequest
 )
 from app.schemas.auth import CurrentUser
 from app.schemas.base import PaginationParams
@@ -68,11 +61,7 @@ async def list_conversations(
     List paginated chat conversations for the current user.
     """
     offset = (pagination.page - 1) * pagination.page_size
-    
-    # Lazily sync timed out threads before listing
-    await ConversationService.run_lazy_timeout_check(current_user.id, db)
-    await db.commit()
-    
+
     stmt = (
         select(Conversation)
         .where(Conversation.user_id == current_user.id)
@@ -96,7 +85,6 @@ async def get_conversation_details(
     """
     conv = await ConversationService.get_conversation(conv_id, db)
     
-    # Strict ownership isolation check
     if conv.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -137,7 +125,6 @@ async def get_conversation_messages(
     
     response_list = []
     for msg in messages:
-        # Convert DB retrieved_chunks to structured dictionary if present
         ref_list = msg.retrieved_chunks.get("references") if msg.retrieved_chunks else None
         
         response_list.append(
@@ -159,30 +146,36 @@ async def get_conversation_messages(
     return response_list
 
 
-@router.post("/{conv_id}/close", response_model=ConversationResponse, status_code=status.HTTP_200_OK)
-async def close_chat_thread(
+@router.patch("/{conv_id}", response_model=ConversationResponse, status_code=status.HTTP_200_OK)
+async def rename_chat_thread(
     conv_id: uuid.UUID,
+    payload: ConversationUpdateRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Manually close a conversation thread.
+    Rename a saved conversation. Activity order is left untouched so the
+    sidebar does not jump when a title is edited.
     """
     conv = await ConversationService.get_conversation(conv_id, db)
-    
+
     if conv.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied."
+            detail="Access denied: unauthorized thread owner."
         )
-        
-    closed_conv = await ConversationService.close_conversation(
-        conv_id=conv_id,
-        reason="Manually closed by user.",
-        db=db
-    )
+
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Title cannot be blank."
+        )
+
+    conv.title = title[:120]
     await db.commit()
-    return closed_conv
+    await db.refresh(conv)
+    return conv
 
 
 @router.delete("/{conv_id}", status_code=status.HTTP_200_OK)
@@ -203,15 +196,12 @@ async def delete_chat_thread(
             detail="Access denied."
         )
         
-    # Delete dependent AIQueries first (since Postgres might lack ON DELETE CASCADE for old deployments)
     from app.models.ai_query import AIQuery
     await db.execute(delete(AIQuery).where(AIQuery.conversation_id == conv_id))
     
-    # Delete dependent Messages manually for safety
     from app.models.message import Message
     await db.execute(delete(Message).where(Message.conversation_id == conv_id))
     
-    # Delete from DB
     await db.execute(delete(Conversation).where(Conversation.id == conv_id))
     await db.commit()
     

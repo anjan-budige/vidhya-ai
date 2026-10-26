@@ -10,17 +10,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class BotSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Telegram
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_BOT_USERNAME: str = "vidhya_hub_bot"
 
-    # Backend API
     BACKEND_URL: str = "http://backend:8000"
+    SECRET_KEY: str = "CHANGE_ME_generate_with_python_secrets_token_hex_32"
 
-    # Admin notification chat
     ADMIN_CHAT_ID: str = ""          # Telegram chat_id for admin alerts (optional)
 
-    # App
     APP_URL: str = "http://localhost"
     ENV: str = "development"
 

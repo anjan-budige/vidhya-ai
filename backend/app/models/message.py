@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 class Message(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "messages"
 
-    # ── Foreign Keys ──────────────────────────────────────────────
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("conversations.id", ondelete="CASCADE"),
@@ -37,7 +36,6 @@ class Message(Base, UUIDPrimaryKeyMixin):
         nullable=False,
     )
 
-    # ── Message Content ───────────────────────────────────────────
     role: Mapped[str] = mapped_column(
         String(20), nullable=False
     )  # 'user' | 'assistant' | 'system'
@@ -46,7 +44,6 @@ class Message(Base, UUIDPrimaryKeyMixin):
         Integer, default=0, server_default="0"
     )
 
-    # ── RAG Metadata ──────────────────────────────────────────────
     retrieved_chunks: Mapped[Optional[dict]] = mapped_column(
         JSONB, nullable=True
     )  # chunk references used for this response
@@ -57,7 +54,6 @@ class Message(Base, UUIDPrimaryKeyMixin):
         Boolean, default=False, server_default="false"
     )
 
-    # ── Context Window Status ─────────────────────────────────────
     is_in_context: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )  # within rolling window?
@@ -65,12 +61,10 @@ class Message(Base, UUIDPrimaryKeyMixin):
         Boolean, default=False, server_default="false"
     )  # rolled into summary?
 
-    # ── Timestamps ────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
 
-    # ── Relationships ─────────────────────────────────────────────
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
     user: Mapped["User"] = relationship(back_populates="messages")
 

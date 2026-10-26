@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 from app.schemas.base import VidhyaBaseModel
 
 
-# ── Feature Flags ─────────────────────────────────────────────────
 
 class PlanFeatures(BaseModel):
     """Plan feature flags."""
@@ -21,7 +20,6 @@ class PlanFeatures(BaseModel):
     mcq_mode: bool = False
 
 
-# ── Plan CRUD ─────────────────────────────────────────────────────
 
 class PlanCreateRequest(BaseModel):
     """Create a new plan (admin only)."""
@@ -31,26 +29,18 @@ class PlanCreateRequest(BaseModel):
     price_inr: int = Field(default=0, ge=0)
     validity_days: int = Field(default=30, ge=1)
 
-    # Message quotas
     messages_per_day: int = Field(default=5, ge=-1)
     messages_per_month: int = Field(default=50, ge=-1)
 
-    # Conversation limits
-    max_conversations: int = Field(default=3, ge=1)
-    max_active_conversations: int = Field(default=1, ge=1)
-    conversation_timeout_min: int = Field(default=30, ge=5)
+    max_sessions: int = Field(default=5, ge=-1)
 
-    # Context / Token controls
-    max_context_messages: int = Field(default=5, ge=1)
     max_context_tokens: int = Field(default=2000, ge=500)
     max_response_tokens: int = Field(default=512, ge=128)
 
-    # Memory controls
     memory_retention_days: int = Field(default=7, ge=1)
     summary_frequency: int = Field(default=10, ge=5)
     long_term_memory_enabled: bool = False
 
-    # Features
     features: PlanFeatures = Field(default_factory=PlanFeatures)
 
 
@@ -65,11 +55,8 @@ class PlanUpdateRequest(BaseModel):
     messages_per_day: Optional[int] = Field(None, ge=-1)
     messages_per_month: Optional[int] = Field(None, ge=-1)
 
-    max_conversations: Optional[int] = Field(None, ge=1)
-    max_active_conversations: Optional[int] = Field(None, ge=1)
-    conversation_timeout_min: Optional[int] = Field(None, ge=5)
+    max_sessions: Optional[int] = Field(None, ge=-1)
 
-    max_context_messages: Optional[int] = Field(None, ge=1)
     max_context_tokens: Optional[int] = Field(None, ge=500)
     max_response_tokens: Optional[int] = Field(None, ge=128)
 
@@ -93,11 +80,8 @@ class PlanResponse(VidhyaBaseModel):
     messages_per_day: int
     messages_per_month: int
 
-    max_conversations: int
-    max_active_conversations: int
-    conversation_timeout_min: int
+    max_sessions: int
 
-    max_context_messages: int
     max_context_tokens: int
     max_response_tokens: int
 
@@ -122,7 +106,9 @@ class PlanPublicResponse(VidhyaBaseModel):
 
     messages_per_day: int
     messages_per_month: int
-    max_active_conversations: int
-    max_context_messages: int
+    max_sessions: int
+
+    max_context_tokens: int
+    max_response_tokens: int
 
     features: dict

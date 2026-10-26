@@ -1,447 +1,631 @@
-"""
-Vidhya Bot — Handlers
-Handles all commands, callback queries, and text messages.
+"""Vidhya Bot — Telegram handlers.
+
+Login is by API key (`/login <api-key>`). Sessions are saved chats with a
+single `max_sessions` cap; there is no active/closed state.
 """
 
 import logging
-import math
+import time
+from datetime import datetime, timezone
+from typing import Optional
+
+def _fmt_limit(value) -> str:
+    return "∞" if value == -1 else str(value)
+
+
 import httpx
-from datetime import datetime, timezone, timedelta
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.chat_action import ChatActionSender
 
 from api_client import (
-    get_plans,
-    get_my_subscription,
-    get_ai_quota,
     create_conversation,
-    list_conversations,
-    close_conversation,
     delete_conversation,
-    initiate_payment,
+    get_ai_quota,
+    get_conversation,
+    get_my_subscription,
+    get_platform_config,
+    list_conversations,
     stream_ai_response,
 )
-from auth_middleware import ensure_session
-from session_store import set_active_conversation, get_session, save_session
+from math_format import clean_math
+from auth_middleware import login_with_api_key
+from config import get_settings
+from session_store import (
+    UserSession,
+    clear_pending,
+    delete_session,
+    get_session,
+    save_session,
+    set_current_session,
+)
 import keyboards as kb
 
 logger = logging.getLogger("vidhya.handlers")
-
+settings = get_settings()
 router = Router()
 
-# ── Command Handlers ──────────────────────────────────────────────────────────
+MENU_ASK = "💬 Ask AI"
+MENU_NEW = "🆕 New Chat"
+MENU_SESSIONS = "📋 My Sessions"
+MENU_DELETE = "🗑️ Delete Session"
+MENU_USAGE = "⚡ Usage"
+MENU_PLAN = "📊 My Plan"
+MENU_HELP = "❓ Help"
+
+MENU_TEXTS = {
+    MENU_ASK,
+    MENU_NEW,
+    MENU_SESSIONS,
+    MENU_DELETE,
+    MENU_USAGE,
+    MENU_PLAN,
+    MENU_HELP,
+}
+
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _config() -> dict:
+    try:
+        return await get_platform_config()
+    except Exception:
+        return {}
+
+
+def _bot_cfg(cfg: dict) -> dict:
+    return cfg.get("bot", {}) or {}
+
+
+def _welcome_text(cfg: dict) -> str:
+    bot = _bot_cfg(cfg)
+    lines = [
+        f"*{bot.get('welcome_title', 'Welcome to Vidhya AI')}*",
+        (bot.get("welcome_message") or "").strip(),
+        (bot.get("login_hint") or "Use /login <api-key> to connect your account.").strip(),
+    ]
+
+    if cfg.get("registration_enabled") and bot.get("show_register_link", True):
+        url = cfg.get("register_url") or f"{settings.APP_URL}/register"
+        register_hint = (bot.get("register_hint") or "").replace("{register_url}", url)
+        if register_hint:
+            lines.append(register_hint)
+
+    return "\n\n".join(line for line in lines if line)
+
+
+async def _send_welcome(message: Message) -> None:
+    text = _welcome_text(await _config())
+    try:
+        await message.answer(text, parse_mode="Markdown")
+    except Exception:
+        await message.answer(text)
+
+
+async def _get_session_or_welcome(message: Message) -> Optional[UserSession]:
+    sess = get_session(message.from_user.id)
+    if not sess:
+        await _send_welcome(message)
+    return sess
+
+
+async def _create_session(sess: UserSession):
+    try:
+        return await create_conversation(sess.api_key), None, 200
+    except httpx.HTTPStatusError as e:
+        detail = "Could not create a session."
+        try:
+            detail = e.response.json().get("detail", detail)
+        except Exception:
+            pass
+        return None, detail, e.response.status_code
+    except Exception as e:
+        logger.error("Create session failed: %s", e)
+        return None, "Could not create a session.", 500
+
+
+def _is_auth_failure(status: int, detail: str) -> bool:
+    return status in (401, 403) and "Session limit" not in detail
+
+
+async def _send_limit_hint(message, sess: UserSession, cfg: dict) -> None:
+    text = _bot_cfg(cfg).get(
+        "session_limit_text",
+        "You have reached your session limit. Delete an existing chat to start a new one.",
+    )
+    try:
+        conversations = await list_conversations(sess.api_key)
+    except Exception:
+        conversations = []
+
+    if conversations:
+        await message.answer(text, reply_markup=kb.delete_sessions_keyboard(conversations))
+    else:
+        await message.answer(text)
+
+
+async def _send_to_session(message, bot: Bot, sess: UserSession, text: str) -> None:
+    cfg = await _config()
+    bot_cfg = _bot_cfg(cfg)
+
+    reply = await message.answer("⏳ Thinking…")
+    full = ""
+    last_edit = 0.0
+
+    async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
+        async for event in stream_ai_response(
+            sess.api_key, text, sess.current_session_id
+        ):
+            if event["type"] == "token":
+                full += event["text"]
+                now = time.time()
+                if now - last_edit > 1.0:
+                    try:
+                        await reply.edit_text(clean_math(full)[:3800] + " ⏳")
+                    except Exception:
+                        pass
+                    last_edit = now
+
+            elif event["type"] == "metadata" and event.get("conversation_id"):
+                sess.current_session_id = event["conversation_id"]
+                save_session(sess)
+
+            elif event["type"] == "error":
+                if event.get("status") in (401, 403) or event.get("code") == "auth":
+                    delete_session(message.from_user.id)
+                    await reply.edit_text(
+                        "⚠️ Your API access is no longer valid. Use /login with a new key."
+                    )
+                else:
+                    await reply.edit_text(f"⚠️ {event.get('detail', 'AI error.')}")
+                return
+
+            elif event["type"] == "done":
+                break
+
+    if not full.strip():
+        await reply.edit_text("⚠️ No response from the AI.")
+        return
+
+    final_text = clean_math(full)[:4096]
+    try:
+        await reply.edit_text(final_text, parse_mode="Markdown")
+    except Exception:
+        try:
+            await reply.edit_text(final_text)
+        except Exception:
+            await message.answer(final_text)
+
+
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    """
-    Handles /start command.
-    Ensures user is registered and has a valid backend session.
-    """
-    sess = await ensure_session(
-        message.from_user.id,
-        message.from_user.first_name,
-        message.from_user.username,
-        force_refresh=True
-    )
+    sess = get_session(message.from_user.id)
+    cfg = await _config()
+    bot_cfg = _bot_cfg(cfg)
+
     if not sess:
-        await message.answer("⚠️ Sorry, I couldn't connect to the backend system right now.")
+        await _send_welcome(message)
         return
 
-    welcome_text = (
-        f"👋 Welcome to *Vidhya Bot*, {message.from_user.first_name}!\n\n"
-        "I am your AI-powered educational assistant. I can help you with your studies, "
-        "answer questions, and analyze documents.\n\n"
-        f"You are currently on the *{sess.plan_name.capitalize()}* plan.\n\n"
-        "How can I help you today?"
+    text = (
+        f"*{bot_cfg.get('welcome_title', 'Welcome to Vidhya AI')}*\n\n"
+        f"Connected as *{message.from_user.first_name}*. "
+        "Send a question or pick an option below."
     )
-    await message.answer(welcome_text, reply_markup=kb.main_menu_keyboard(), parse_mode="Markdown")
+    await message.answer(text, reply_markup=kb.main_menu_keyboard(), parse_mode="Markdown")
 
 
-@router.message(F.text == "❓ Help")
+@router.message(Command("login"))
+async def cmd_login(message: Message):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "Usage: `/login <api-key>`\n\n"
+            "Create and enable a key in your web account, then paste it here.",
+            parse_mode="Markdown",
+        )
+        return
+
+    api_key = parts[1].strip()
+    try:
+        await login_with_api_key(message.from_user.id, api_key)
+    except ValueError as e:
+        await message.answer(f"⚠️ {e}")
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    await message.answer(
+        f"✅ Connected as *{message.from_user.first_name}*. Send a message to start.",
+        reply_markup=kb.main_menu_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(Command("logout"))
+async def cmd_logout(message: Message):
+    delete_session(message.from_user.id)
+    cfg = await _config()
+    await message.answer(_welcome_text(cfg))
+
+
+@router.message(F.text == MENU_HELP)
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    help_text = (
-        "📚 *Vidhya Bot Commands*\n\n"
-        "💬 *Ask AI* — Send me any question, and I'll answer it.\n"
-        "🆕 *New Chat* — Start a fresh conversation context.\n"
-        "📋 *My Chats* — View and switch between your recent conversations.\n"
-        "🗑️ *Delete Chat* — Delete a conversation and its history.\n"
-        "📊 *My Plan* — View your subscription plan and upgrade options.\n"
-        "⚡ *Usage* — Check your AI usage and remaining quota.\n"
-        "🌐 *Open Vidhya Dashboard* — Open the mini web app to manage your account.\n"
+    await message.answer(
+        "📚 *Vidhya AI commands*\n\n"
+        "💬 Ask AI — send a question\n"
+        "🆕 New Chat — start a new session\n"
+        "📋 My Sessions — switch between saved chats\n"
+        "🗑️ Delete Session — remove a chat\n"
+        "⚡ Usage — messages and session usage\n"
+        "📊 My Plan — your current plan\n"
+        "🔑 /login <api-key> — connect your account\n"
+        "🚪 /logout — disconnect this chat\n\n"
+        f"🌐 Web app — chats, plans and account: {settings.APP_URL}",
+        parse_mode="Markdown",
+        reply_markup=kb.main_menu_keyboard(),
     )
-    await message.answer(help_text, reply_markup=kb.main_menu_keyboard(), parse_mode="Markdown")
 
 
-@router.message(F.text == "🆕 New Chat")
+
+@router.message(F.text == MENU_NEW)
 @router.message(Command("newchat"))
-async def cmd_newchat(message: Message):
-    sess = await ensure_session(message.from_user.id, message.from_user.first_name, message.from_user.username)
+async def cmd_new_session(message: Message):
+    sess = await _get_session_or_welcome(message)
     if not sess:
         return
 
-    try:
-        data = await create_conversation(sess.session_token)
-        conv_id = data["id"]
-        set_active_conversation(message.from_user.id, conv_id)
-        
-        await message.answer(
-            "✅ Started a new conversation!\n"
-            "The context has been cleared. What would you like to discuss?",
-            reply_markup=kb.main_menu_keyboard()
-        )
-    except httpx.HTTPStatusError as e:
-        err_msg = "⚠️ Failed to start a new chat."
-        if e.response.status_code == 400:
-            try:
-                err_msg = f"⚠️ {e.response.json().get('detail', err_msg)}"
-            except Exception:
-                pass
-        await message.answer(err_msg)
-    except Exception as e:
-        logger.error(f"Failed to create conversation: {e}")
-        await message.answer("⚠️ Failed to start a new chat. You might have reached your active chat limit.")
-
-
-@router.message(F.text == "📋 My Chats")
-async def cmd_mychats(message: Message):
-    sess = await ensure_session(message.from_user.id, message.from_user.first_name, message.from_user.username)
-    if not sess:
-        return
-
-    try:
-        convs = await list_conversations(sess.session_token)
-        if not convs:
-            await message.answer("You don't have any active chats.")
+    data, error, status = await _create_session(sess)
+    if error:
+        if _is_auth_failure(status, error):
+            delete_session(message.from_user.id)
+            await _send_welcome(message)
             return
-            
-        await message.answer(
-            "Here are your recent conversations. Select one to switch:",
-            reply_markup=kb.conversations_keyboard(convs)
-        )
+        await _send_limit_hint(message, sess, await _config())
+        return
+
+    sess.current_session_id = data["id"]
+    sess.pending_message = None
+    sess.pending_at = None
+    sess.skip_idle_once = True
+    save_session(sess)
+
+    cfg = await _config()
+    await message.answer(
+        _bot_cfg(cfg).get("session_started_text", "New session started."),
+        reply_markup=kb.main_menu_keyboard(),
+    )
+
+
+@router.message(F.text == MENU_SESSIONS)
+@router.message(Command("chats"))
+async def cmd_sessions(message: Message):
+    sess = await _get_session_or_welcome(message)
+    if not sess:
+        return
+
+    try:
+        conversations = await list_conversations(sess.api_key)
     except Exception as e:
-        logger.error(f"Failed to list conversations: {e}")
-        await message.answer("⚠️ Failed to load your chats.")
+        logger.error("List sessions failed: %s", e)
+        await message.answer("⚠️ Could not load your sessions.")
+        return
+
+    if not conversations:
+        await message.answer("You have no saved sessions yet. Send a message to start one.")
+        return
+
+    await message.answer(
+        "📋 *Your sessions*\nSelect one to continue.",
+        parse_mode="Markdown",
+        reply_markup=kb.sessions_keyboard(conversations),
+    )
 
 
-@router.message(F.text == "🗑️ Delete Chat")
+@router.message(F.text == MENU_DELETE)
 @router.message(Command("deletechat"))
-async def cmd_deletechat(message: Message):
-    sess = await ensure_session(message.from_user.id, message.from_user.first_name, message.from_user.username)
+async def cmd_delete_sessions(message: Message):
+    sess = await _get_session_or_welcome(message)
     if not sess:
         return
 
     try:
-        convs = await list_conversations(sess.session_token)
-        if not convs:
-            await message.answer("You don't have any active chats to delete.")
-            return
-            
-        await message.answer(
-            "Select a conversation to permanently delete:",
-            reply_markup=kb.delete_conversations_keyboard(convs)
-        )
-    except Exception as e:
-        logger.error(f"Failed to list conversations for deletion: {e}")
-        await message.answer("⚠️ Failed to load your chats.")
-
-
-@router.message(F.text == "📊 My Plan")
-@router.message(Command("plan"))
-async def cmd_plan(message: Message):
-    sess = await ensure_session(message.from_user.id, message.from_user.first_name, message.from_user.username)
-    if not sess:
+        conversations = await list_conversations(sess.api_key)
+    except Exception:
+        await message.answer("⚠️ Could not load your sessions.")
         return
 
-    try:
-        sub = await get_my_subscription(sess.session_token)
-        plans = await get_plans()
-        
-        raw_plan_name = sub.get("plan_name", "free").lower()
-        plan_name = sub.get("plan_display_name", sub.get("plan_name", "free")).capitalize()
-        status = sub.get("status", "unknown").capitalize()
-        
-        daily_used = sub.get("daily_messages_used", 0)
-        daily_limit = sub.get("daily_messages_limit", 1)
-        monthly_used = sub.get("monthly_messages_used", 0)
-        monthly_limit = sub.get("monthly_messages_limit", 0)
-        active_convs = sub.get("active_conversations", 0)
-        max_convs = sub.get("max_active_conversations", 1)
-        
-        plan_snapshot = sub.get("plan_snapshot") or {}
-        current_price = plan_snapshot.get("price_inr", 0)
-        
-        text = f"📊 *Your Subscription Details*\n\n"
-        text += f"🏷️ *Plan:* {plan_name}\n"
-        text += f"⚡ *Status:* {status}\n\n"
-        
-        started_at = sub.get("started_at")
-        if started_at:
-            try:
-                s_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                # Convert to IST
-                s_dt_ist = s_dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
-                text += f"🗓️ *Purchased On:* {s_dt_ist.strftime('%b %d, %Y')}\n"
-            except:
-                pass
-                
-        expires_at = sub.get("expires_at")
-        
-        if raw_plan_name == "free":
-            text += f"⏳ *Validity:* Lifetime\n"
-        elif expires_at:
-            try:
-                e_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                e_dt_ist = e_dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
-                now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
-                days_left = max(0, (e_dt_ist.date() - now_ist.date()).days)
-                
-                if days_left == 0:
-                    validity_str = f"Expires today ({e_dt_ist.strftime('%b %d, %Y')})"
-                elif days_left == 1:
-                    validity_str = f"1 day left (Expires {e_dt_ist.strftime('%b %d, %Y')})"
-                else:
-                    validity_str = f"{days_left} days left (Expires {e_dt_ist.strftime('%b %d, %Y')})"
-                    
-                text += f"⏳ *Validity:* {validity_str}\n"
-            except:
-                pass
-        else:
-            text += f"⏳ *Validity:* Lifetime\n"
-            
-        text += f"\n📈 *Usage & Limits:*\n"
-        text += f"• Daily Messages: {daily_used} / {daily_limit}\n"
-        text += f"• Monthly Messages: {monthly_used} / {monthly_limit}\n"
-        text += f"• Active Chats: {active_convs} / {max_convs}\n\n"
-        
-        text += "Do you want to upgrade your plan?"
-        
-        await message.answer(text, reply_markup=kb.upgrade_plans_keyboard(plans, current_price), parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Failed to get plan info: {e}")
-        await message.answer("⚠️ Failed to load plan information.")
+    if not conversations:
+        await message.answer("You have no sessions to delete.")
+        return
+
+    await message.answer(
+        "🗑️ *Delete a session*\nThis removes the chat and its messages.",
+        parse_mode="Markdown",
+        reply_markup=kb.delete_sessions_keyboard(conversations),
+    )
 
 
-@router.message(F.text == "⚡ Usage")
+
+@router.message(F.text == MENU_USAGE)
 @router.message(Command("usage"))
 async def cmd_usage(message: Message):
-    sess = await ensure_session(message.from_user.id, message.from_user.first_name, message.from_user.username)
+    sess = await _get_session_or_welcome(message)
     if not sess:
         return
 
     try:
-        quota = await get_ai_quota(sess.session_token)
-        
-        daily_msgs = quota.get("daily_messages_used", 0)
-        max_daily_msgs = quota.get("daily_messages_limit", 0)
-        
-        monthly_msgs = quota.get("monthly_messages_used", 0)
-        max_monthly_msgs = quota.get("monthly_messages_limit", 0)
-        
-        text = "⚡ *Your AI Usage*\n\n"
-        text += f"Daily Messages: {daily_msgs} / {max_daily_msgs}\n"
-        text += f"Monthly Messages: {monthly_msgs} / {max_monthly_msgs}\n\n"
-        text += "_Quota resets at midnight IST._"
-        
-        await message.answer(text, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Failed to get usage info: {e}")
-        await message.answer("⚠️ Failed to load usage information.")
+        quota = await get_ai_quota(sess.api_key)
+    except Exception:
+        await message.answer("⚠️ Could not load your usage.")
+        return
+
+    await message.answer(
+        "⚡ *Your usage*\n\n"
+        f"Daily messages: {quota.get('daily_messages_used', 0)} / "
+        f"{_fmt_limit(quota.get('daily_messages_limit', 0))}\n"
+        f"Monthly messages: {quota.get('monthly_messages_used', 0)} / "
+        f"{_fmt_limit(quota.get('monthly_messages_limit', 0))}\n"
+        f"Sessions: {quota.get('sessions_used', 0)} / {_fmt_limit(quota.get('max_sessions', 0))}\n"
+        f"Plan: {quota.get('plan_name', 'free').capitalize()}",
+        parse_mode="Markdown",
+        reply_markup=kb.main_menu_keyboard(),
+    )
 
 
-# ── Callback Handlers ─────────────────────────────────────────────────────────
+@router.message(F.text == MENU_PLAN)
+@router.message(Command("plan"))
+async def cmd_plan(message: Message):
+    sess = await _get_session_or_welcome(message)
+    if not sess:
+        return
+
+    try:
+        sub = await get_my_subscription(sess.api_key)
+    except Exception:
+        await message.answer("⚠️ Could not load your plan.")
+        return
+
+    cfg = await _config()
+    plan_name = sub.get("plan_display_name") or "Free"
+    lines = [
+        "📊 *Your plan*",
+        "",
+        f"Plan: *{plan_name}*",
+        f"Sessions: {sub.get('sessions_used', 0)} / {_fmt_limit(sub.get('max_sessions', 0))}",
+        f"Daily messages: {sub.get('daily_messages_used', 0)} / {_fmt_limit(sub.get('daily_messages_limit', 0))}",
+        f"Monthly messages: {sub.get('monthly_messages_used', 0)} / {_fmt_limit(sub.get('monthly_messages_limit', 0))}",
+    ]
+    if cfg.get("billing_enabled", True):
+        lines.append("")
+        lines.append(f"Browse plans and upgrade: {settings.APP_URL}/plans")
+    else:
+        lines.append("")
+        lines.append("Open access — every feature is included.")
+
+    await message.answer(
+        "\n".join(lines), parse_mode="Markdown", reply_markup=kb.main_menu_keyboard()
+    )
+
+
+@router.message(F.text == MENU_ASK)
+async def cmd_ask(message: Message):
+    if not get_session(message.from_user.id):
+        await _send_welcome(message)
+        return
+    await message.answer("Type your question below ⬇️", reply_markup=kb.main_menu_keyboard())
+
+
 
 @router.callback_query(F.data == "cancel")
-async def cq_cancel(callback: CallbackQuery):
-    await callback.message.delete()
-    await callback.answer("Cancelled.")
-
-
-@router.callback_query(F.data.startswith("switch_conv:"))
-async def cq_switch_conv(callback: CallbackQuery):
-    conv_id = callback.data.split(":")[1]
-    set_active_conversation(callback.from_user.id, conv_id)
-    
-    await callback.message.edit_text("✅ Switched to conversation.")
+async def cb_cancel(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("delete_conv:"))
-async def cq_delete_conv(callback: CallbackQuery):
-    conv_id = callback.data.split(":")[1]
-    sess = await ensure_session(callback.from_user.id, callback.from_user.first_name, callback.from_user.username)
+@router.callback_query(F.data == "continue_session")
+async def cb_continue(callback: CallbackQuery, bot: Bot):
+    sess = get_session(callback.from_user.id)
     if not sess:
-        await callback.answer("Session error.", show_alert=True)
+        await callback.answer("Please /login first.", show_alert=True)
         return
 
+    pending = clear_pending(callback.from_user.id)
+    save_session(sess)
     try:
-        await delete_conversation(sess.session_token, conv_id)
-        
-        # If the deleted conversation was the active one, clear it
-        if sess.active_conv_id == conv_id:
-            set_active_conversation(callback.from_user.id, None)
-            
-        await callback.message.edit_text("✅ Conversation deleted permanently.")
-        await callback.answer()
-    except httpx.HTTPStatusError as e:
-        err_msg = "⚠️ Failed to delete conversation."
-        try:
-            err_msg = f"⚠️ {e.response.json().get('detail', err_msg)}"
-        except Exception:
-            pass
-        logger.error(f"Failed to delete conversation: HTTP {e.response.status_code} - {err_msg}")
-        await callback.answer(err_msg, show_alert=True)
-    except Exception as e:
-        logger.error(f"Failed to delete conversation: {e}")
-        await callback.answer("⚠️ Failed to delete conversation.", show_alert=True)
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer()
 
-
-@router.callback_query(F.data.startswith("buy_plan:"))
-async def cq_buy_plan(callback: CallbackQuery):
-    plan_id = callback.data.split(":")[1]
-    sess = await ensure_session(callback.from_user.id, callback.from_user.first_name, callback.from_user.username)
-    if not sess:
-        await callback.answer("Session error.", show_alert=True)
+    if not pending:
+        await callback.message.answer("Nothing to continue. Send a message.")
         return
 
-    try:
-        # Get plans to find the amount
-        plans = await get_plans()
-        plan = next((p for p in plans if p["id"] == plan_id), None)
-        if not plan:
-            await callback.answer("Plan not found.", show_alert=True)
+    await _send_to_session(callback.message, bot, sess, pending)
+
+
+@router.callback_query(F.data == "new_session")
+async def cb_new_session(callback: CallbackQuery, bot: Bot):
+    sess = get_session(callback.from_user.id)
+    if not sess:
+        await callback.answer("Please /login first.", show_alert=True)
+        return
+
+    pending = clear_pending(callback.from_user.id)
+    data, error, status = await _create_session(sess)
+    if error:
+        if _is_auth_failure(status, error):
+            delete_session(callback.from_user.id)
+            await callback.answer("Your API access is no longer valid.", show_alert=True)
+            await _send_welcome(callback.message)
             return
+        if pending:
+            sess.pending_message = pending
+            sess.pending_at = time.time()
+            save_session(sess)
+        await callback.answer()
+        await _send_limit_hint(callback.message, sess, await _config())
+        return
 
-        # Initiate payment
-        amount_paise = plan["price_inr"] * 100
-        payment = await initiate_payment(sess.session_token, plan_id, amount_paise)
-        payment_url = payment.get("payment_url")
-        
-        if payment_url:
-            await callback.message.edit_text(
-                f"💳 Proceed to pay ₹{plan['price_inr']} for the *{plan['name'].capitalize()}* plan.\n\n"
-                "Click the button below to complete your payment.",
-                reply_markup=kb.payment_keyboard(payment_url, plan["name"]),
-                parse_mode="Markdown"
-            )
-        else:
-            await callback.answer("Failed to generate payment URL.", show_alert=True)
-            
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 409:
-            err_detail = e.response.json().get("detail", "Plan conflict.")
-            await callback.answer(err_detail, show_alert=True)
-        else:
-            logger.error(f"Payment initiation HTTP error: {e}")
-            await callback.answer("⚠️ Failed to initiate payment.", show_alert=True)
-    except Exception as e:
-        logger.error(f"Payment initiation failed: {e}")
-        await callback.answer("⚠️ Failed to initiate payment.", show_alert=True)
+    sess.current_session_id = data["id"]
+    sess.skip_idle_once = True
+    save_session(sess)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer("New session started.")
 
-
-@router.callback_query(F.data == "check_payment")
-async def cq_check_payment(callback: CallbackQuery):
-    # In a real scenario, this could check the backend for payment status,
-    # but the backend will activate via webhook. So we just inform the user.
-    await callback.answer("Checking payment status... If successful, you will receive a confirmation message.", show_alert=True)
-    await callback.message.delete()
+    cfg = await _config()
+    if pending:
+        await _send_to_session(callback.message, bot, sess, pending)
+    else:
+        await callback.message.answer(
+            _bot_cfg(cfg).get("session_started_text", "New session started."),
+            reply_markup=kb.main_menu_keyboard(),
+        )
 
 
-# ── AI Message Handler ────────────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("select_session:"))
+async def cb_select_session(callback: CallbackQuery):
+    sess = get_session(callback.from_user.id)
+    if not sess:
+        await callback.answer("Please /login first.", show_alert=True)
+        return
+
+    conv_id = callback.data.split(":", 1)[1]
+    set_current_session(callback.from_user.id, conv_id)
+    clear_pending(callback.from_user.id)
+    save_session(sess)
+    await callback.answer("Session selected.")
+    try:
+        await callback.message.edit_text("Session selected. Send your message below.")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("delete_session:"))
+async def cb_delete_session(callback: CallbackQuery):
+    sess = get_session(callback.from_user.id)
+    if not sess:
+        await callback.answer("Please /login first.", show_alert=True)
+        return
+
+    conv_id = callback.data.split(":", 1)[1]
+    try:
+        await delete_conversation(sess.api_key, conv_id)
+    except Exception:
+        await callback.answer("Could not delete the session.", show_alert=True)
+        return
+
+    if sess.current_session_id == conv_id:
+        sess.current_session_id = None
+        sess.skip_idle_once = True
+        save_session(sess)
+
+    await callback.answer("Deleted.")
+    try:
+        await callback.message.edit_text("Session deleted.")
+    except Exception:
+        pass
+
+
 
 @router.message(F.text)
-async def handle_ai_message(message: Message, bot: Bot):
-    """
-    Catch-all text handler.
-    If it's not a command or menu button, treat it as a message to the AI.
-    Streams the SSE response back to the user by editing the message.
-    """
-    # Ignore "💬 Ask AI" placeholder text
-    if message.text == "💬 Ask AI":
-        await message.answer("Just type your question here! ⬇️")
+async def handle_text(message: Message, bot: Bot):
+    if message.text in MENU_TEXTS:
         return
 
-    sess = await ensure_session(message.from_user.id, message.from_user.first_name, message.from_user.username)
+    if (message.text or "").startswith("/"):
+        await message.answer("Unknown command. Use /help.")
+        return
+
+    sess = get_session(message.from_user.id)
     if not sess:
-        await message.answer("⚠️ Session error. Please /start again.")
+        await _send_welcome(message)
         return
 
-    # Ensure active conversation exists
-    if not sess.active_conv_id:
-        try:
-            data = await create_conversation(sess.session_token)
-            set_active_conversation(message.from_user.id, data["id"])
-        except httpx.HTTPStatusError as e:
-            err_msg = "⚠️ Failed to start a chat session. Please use /newchat."
-            if e.response.status_code == 400:
-                try:
-                    err_msg = f"⚠️ {e.response.json().get('detail', err_msg)}\nUse /deletechat to free up space."
-                except Exception:
-                    pass
-            await message.answer(err_msg)
+    cfg = await _config()
+    bot_cfg = _bot_cfg(cfg)
+    idle_minutes = int(bot_cfg.get("idle_prompt_minutes", 25) or 25)
+
+    if sess.pending_message:
+        sess.pending_message = None
+        sess.pending_at = None
+        sess.skip_idle_once = True
+        save_session(sess)
+
+    if not sess.current_session_id:
+        data, error, status = await _create_session(sess)
+        if error:
+            if _is_auth_failure(status, error):
+                delete_session(message.from_user.id)
+                await _send_welcome(message)
+                return
+            await _send_limit_hint(message, sess, cfg)
             return
-        except Exception as e:
-            logger.error(f"Auto-create conv failed: {e}")
-            await message.answer("⚠️ Failed to start a chat session. Please use /newchat.")
-            return
-
-    # Send typing action
-    async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
-        # Create an initial placeholder message
-        reply_msg = await message.answer("⏳ _Thinking..._", parse_mode="Markdown")
-
-        full_response = ""
-        last_edit_time = 0
-        import time
-
+        sess.current_session_id = data["id"]
+        save_session(sess)
+    else:
         try:
-            # Stream SSE events
-            async for token in stream_ai_response(
-                sess.session_token,
-                message.text,
-                sess.active_conv_id
-            ):
-                if token.startswith("\n\n⚠️"):
-                    # Error propagated from SSE
-                    full_response += token
-                    break
-
-                full_response += token
-                
-                # Throttle message edits to avoid Telegram rate limits (1 edit per second)
-                current_time = time.time()
-                if current_time - last_edit_time > 1.0:
-                    try:
-                        await reply_msg.edit_text(f"{full_response} ⏳")
-                        last_edit_time = current_time
-                    except Exception:
-                        pass # Ignore temporary edit errors
-
-            # Final edit to remove hourglass
-            if full_response.strip():
-                try:
-                    await reply_msg.edit_text(full_response, parse_mode="Markdown")
-                except Exception:
-                    await reply_msg.edit_text(full_response)
-            else:
-                await reply_msg.edit_text("⚠️ No response from AI.")
-
+            conv = await get_conversation(sess.api_key, sess.current_session_id)
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 400:
-                err_json = e.response.json()
-                if "closed" in str(err_json) or "timed out" in str(err_json):
-                    # Conversation timed out on the backend, clear the bot session's active_conv_id
-                    sess.active_conv_id = None
-                    save_session(sess)
-                    await reply_msg.edit_text("⚠️ Your previous session timed out. I have started a new one for you! Please send your message again.")
+            if e.response.status_code in (401, 403):
+                delete_session(message.from_user.id)
+                await _send_welcome(message)
+                return
+            if e.response.status_code == 404:
+                sess.current_session_id = None
+                save_session(sess)
+                data, error, status = await _create_session(sess)
+                if error:
+                    if _is_auth_failure(status, error):
+                        delete_session(message.from_user.id)
+                        await _send_welcome(message)
+                        return
+                    await _send_limit_hint(message, sess, cfg)
                     return
-            logger.error(f"AI Stream HTTP Error: {e}")
-            await reply_msg.edit_text("⚠️ An error occurred while communicating with the AI.")
-            return
+                sess.current_session_id = data["id"]
+                save_session(sess)
+            else:
+                await message.answer("⚠️ Could not load your session.")
+                return
+        else:
+            if not sess.skip_idle_once and not sess.pending_message:
+                try:
+                    last = datetime.fromisoformat(
+                        conv["last_activity_at"].replace("Z", "+00:00")
+                    )
+                    idle_seconds = (_now() - last).total_seconds()
+                except Exception:
+                    idle_seconds = 0
 
-        except Exception as e:
-            logger.error(f"AI Stream error: {e}")
-            await reply_msg.edit_text("⚠️ An error occurred while generating the response.")
-            return
+                if idle_seconds >= idle_minutes * 60:
+                    sess.pending_message = message.text
+                    sess.pending_at = time.time()
+                    save_session(sess)
+                    await message.answer(
+                        bot_cfg.get(
+                            "session_prompt_text",
+                            "You have been away. Continue the previous session or start a new one?",
+                        ),
+                        reply_markup=kb.continue_or_new_keyboard(),
+                    )
+                    return
+
+    sess.skip_idle_once = False
+    save_session(sess)
+    await _send_to_session(message, bot, sess, message.text)

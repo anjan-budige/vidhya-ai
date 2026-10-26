@@ -1,11 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Quota Enforcement Service                          ║
-║  Provides: Dual-layer quota checks (Redis hot-cache first),      ║
-║  Postgres fallback, and async/sync DB persistence handlers.      ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import json
 import uuid
 from datetime import date, datetime, timezone, timedelta
@@ -41,6 +33,14 @@ class QuotaService:
         Checks Redis cache first; falls back to DB query and caches results.
         Automatically provisions the default "free" plan if none is active.
         """
+        from app.services.platform import FREE, PlatformConfigService
+
+        # Free mode: the free plan row IS the platform's limits. Bypass any
+        # per-user snapshot/cache so a paid plan can never leak through.
+        mode = await PlatformConfigService.get_mode(db, redis)
+        if mode == FREE:
+            return await PlatformConfigService.get_free_limits(db, redis)
+
         cache_key = RedisKeys.subscription_cache(str(user_id))
         cached_limits = await redis.get(cache_key)
         
@@ -50,7 +50,6 @@ class QuotaService:
             except Exception:
                 pass  # Parse error, fallback to DB
                 
-        # Query DB for active subscription
         result = await db.execute(
             select(UserSubscription)
             .where(UserSubscription.user_id == user_id)
@@ -83,7 +82,7 @@ class QuotaService:
         Does NOT increment counters.
         """
         limits = await cls.get_active_subscription_limits(user_id, db, redis)
-        
+
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         today = datetime.now(ist_tz).date()
         date_str = today.strftime("%Y-%m-%d")
@@ -102,27 +101,24 @@ class QuotaService:
         else:
             raise ValueError(f"Invalid quota type: {quota_type}")
             
-        # 2. Daily Check (if not unlimited)
-        daily_used = 0
+        # 2. Daily counter — always read so usage is accurate even when unlimited.
+        daily_key = RedisKeys.quota_daily(str(user_id), date_str)
+        daily_val = await redis.get(daily_key)
+
+        if daily_val is None:
+            db_result = await db.execute(
+                select(UsageTracking)
+                .where(UsageTracking.user_id == user_id)
+                .where(UsageTracking.period_type == "daily")
+                .where(UsageTracking.period_date == today)
+            )
+            db_record = db_result.scalar_one_or_none()
+            daily_used = db_record.messages_used if db_record else 0
+            await redis.set(daily_key, str(daily_used), ex=86400)
+        else:
+            daily_used = int(daily_val)
+
         if daily_limit != -1:
-            daily_key = RedisKeys.quota_daily(str(user_id), date_str)
-            daily_val = await redis.get(daily_key)
-            
-            if daily_val is None:
-                # Fallback to DB
-                db_result = await db.execute(
-                    select(UsageTracking)
-                    .where(UsageTracking.user_id == user_id)
-                    .where(UsageTracking.period_type == "daily")
-                    .where(UsageTracking.period_date == today)
-                )
-                db_record = db_result.scalar_one_or_none()
-                daily_used = db_record.messages_used if db_record else 0
-                # Set Redis with 24 hours TTL
-                await redis.set(daily_key, str(daily_used), ex=86400)
-            else:
-                daily_used = int(daily_val)
-                
             if daily_used + increment > daily_limit:
                 return False, {
                     "limit_type": "daily",
@@ -131,14 +127,13 @@ class QuotaService:
                     "limit": daily_limit,
                     "remaining": max(0, daily_limit - daily_used)
                 }
-                
-        # 3. Monthly Check (if not unlimited)
+
+        # 3. Monthly counter — always read for accurate reporting.
         monthly_used = 0
-        if monthly_limit != -1:
-            monthly_key = RedisKeys.quota_monthly(str(user_id), month_str)
-            monthly_val = await redis.get(monthly_key)
-            
-            if monthly_val is None:
+        monthly_key = RedisKeys.quota_monthly(str(user_id), month_str)
+        monthly_val = await redis.get(monthly_key)
+
+        if monthly_val is None:
                 # Fallback to DB (First day of month)
                 first_of_month = today.replace(day=1)
                 db_result = await db.execute(
@@ -164,11 +159,11 @@ class QuotaService:
                     )
                     monthly_used = len(doc_result.scalars().all())
                     
-                # Set Redis with 30 days TTL
                 await redis.set(monthly_key, str(monthly_used), ex=30 * 86400)
-            else:
-                monthly_used = int(monthly_val)
-                
+        else:
+            monthly_used = int(monthly_val)
+
+        if monthly_limit != -1:
             if monthly_used + increment > monthly_limit:
                 return False, {
                     "limit_type": "monthly",
@@ -202,35 +197,25 @@ class QuotaService:
         Increment the user's daily and monthly usage counters.
         Updates Redis hot-counters immediately, and spawns/triggers DB write.
         """
-        limits = await cls.get_active_subscription_limits(user_id, db, redis)
-        
         ist_tz = timezone(timedelta(hours=5, minutes=30))
         today = datetime.now(ist_tz).date()
         date_str = today.strftime("%Y-%m-%d")
         month_str = today.strftime("%Y-%m")
         
-        # 1. Update daily in Redis (if daily limit is active)
+        # 1/2. Always track usage so the counters stay correct when a limit
+        # is later changed from unlimited to a finite value.
         daily_key = RedisKeys.quota_daily(str(user_id), date_str)
-        if limits.get("messages_per_day", 5) != -1 or quota_type == "documents":
-            daily_used = await redis.incrby(daily_key, increment)
-            # Set TTL if new key
-            if daily_used == increment:
-                await redis.expire(daily_key, 86400)
-        else:
-            daily_used = 0
-            
-        # 2. Update monthly in Redis (if monthly limit is active)
+        daily_used = await redis.incrby(daily_key, increment)
+        if daily_used == increment:
+            await redis.expire(daily_key, 86400)
+
         monthly_key = RedisKeys.quota_monthly(str(user_id), month_str)
-        if limits.get("messages_per_month", 50) != -1 or quota_type == "documents":
-            monthly_used = await redis.incrby(monthly_key, increment)
-            if monthly_used == increment:
-                await redis.expire(monthly_key, 30 * 86400)
-        else:
-            monthly_used = 0
+        monthly_used = await redis.incrby(monthly_key, increment)
+        if monthly_used == increment:
+            await redis.expire(monthly_key, 30 * 86400)
             
         # 3. DB Sync
         if not bypass_db:
-            # Sync to PostgreSQL synchronously or trigger Celery task
             # For now we write to DB directly using a highly efficient UPSERT statement
             await cls.sync_quota_to_db(user_id, quota_type, increment, db, tokens_input=tokens_input, tokens_output=tokens_output)
             
@@ -263,7 +248,6 @@ class QuotaService:
             ("monthly", first_of_month)
         ]
         
-        # Find active subscription
         sub_result = await db.execute(
             select(UserSubscription)
             .where(UserSubscription.user_id == user_id)
@@ -273,7 +257,6 @@ class QuotaService:
         sub_id = sub.id if sub else None
         
         for period_type, period_date in periods:
-            # Build insert values
             insert_vals = {
                 "id": uuid.uuid4(),
                 "user_id": user_id,

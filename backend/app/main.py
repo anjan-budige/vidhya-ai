@@ -1,10 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — FastAPI Application Entry Point                    ║
-║  Phase 2: Config, Database, Redis, Models, Schemas, Dependencies ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -22,22 +15,14 @@ from app.redis_client import redis_client, close_redis
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.csrf import CSRFMiddleware
 
-# Import all models to register them with SQLAlchemy metadata
 import app.models  # noqa: F401
 
-# Import versioned routers
-from app.routers import auth, plans, subscriptions, payments, conversations, ai, documents, analytics, users, audit, admin_settings
+from app.routers import auth, plans, subscriptions, payments, payments_admin, conversations, ai, documents, analytics, users, audit, platform, web_auth, ai_admin
 from app.workers.celery_app import celery_app
 
-# ═══════════════════════════════════════════════════════════════════
-# Configuration
-# ═══════════════════════════════════════════════════════════════════
 
 settings = get_settings()
 
-# ═══════════════════════════════════════════════════════════════════
-# Logging
-# ═══════════════════════════════════════════════════════════════════
 
 structlog.configure(
     processors=[
@@ -56,16 +41,11 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
-# ═══════════════════════════════════════════════════════════════════
-# Startup Time Tracking
-# ═══════════════════════════════════════════════════════════════════
 
 startup_time: float = 0
 
 
-# ═══════════════════════════════════════════════════════════════════
 # Lifespan — startup/shutdown hooks
-# ═══════════════════════════════════════════════════════════════════
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -75,14 +55,12 @@ async def lifespan(app: FastAPI):
 
     logger.info("vidhya.startup", env=settings.ENV, debug=settings.DEBUG)
 
-    # ── Connect Redis ─────────────────────────────────────────────
     try:
         await redis_client.ping()
         logger.info("redis.connected", url=settings.REDIS_URL)
     except Exception as e:
         logger.error("redis.connection_failed", error=str(e))
 
-    # ── Test Database Connection ──────────────────────────────────
     try:
         async with engine.begin() as conn:
             result = await conn.execute(text("SELECT 1"))
@@ -91,7 +69,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("postgres.connection_failed", error=str(e))
 
-    # ── Verify pgvector extension ─────────────────────────────────
     try:
         async with engine.begin() as conn:
             result = await conn.execute(
@@ -105,16 +82,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("pgvector.check_failed", error=str(e))
 
-    # ── Auto-Heal Vector Dimensions (Mistral 1024) ────────────────
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(text("ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector(1024);"))
-            logger.info("pgvector.auto_healed", dimensions=1024, msg="Successfully resized embedding column")
-    except Exception as e:
-        # Ignore errors if the table doesn't exist yet or is already correct
-        logger.debug("pgvector.auto_heal_skipped", error=str(e))
-
-    # ── Auto-Heal Documents Table Progress Column ─────────────────
     try:
         async with engine.begin() as conn:
             await conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS processed_chunks INTEGER DEFAULT 0;"))
@@ -122,7 +89,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("db.documents.progress_column_failed", error=str(e))
 
-    # ── Verify Plans Seeded ───────────────────────────────────────
     try:
         async with async_session_factory() as session:
             result = await session.execute(text("SELECT COUNT(*) FROM plans"))
@@ -133,7 +99,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("plans.check_failed", error=str(e))
 
-    # ── Verify / Seed Admin ───────────────────────────────────────
     try:
         from app.models.admin import Admin
         from app.services.auth import AdminAuthService
@@ -159,7 +124,6 @@ async def lifespan(app: FastAPI):
                     await session.commit()
                     logger.info("admin.seeded", username=new_admin.username)
                     
-                    # Send welcome email
                     if settings.SUPERADMIN_EMAIL:
                         await send_deployment_welcome_email(
                             to_email=settings.SUPERADMIN_EMAIL,
@@ -184,7 +148,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # ── Shutdown ──────────────────────────────────────────────────
     logger.info("vidhya.shutdown")
     await close_redis()
     logger.info("redis.disconnected")
@@ -192,9 +155,6 @@ async def lifespan(app: FastAPI):
     logger.info("postgres.disconnected")
 
 
-# ═══════════════════════════════════════════════════════════════════
-# FastAPI Application
-# ═══════════════════════════════════════════════════════════════════
 
 app = FastAPI(
     title=f"{settings.APP_NAME} API",
@@ -206,7 +166,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS Middleware ───────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -216,28 +175,26 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
 )
 
-# ── Rate Limit Middleware ─────────────────────────────────────────
 app.add_middleware(RateLimitMiddleware)
 
-# ── CSRF Middleware ───────────────────────────────────────────────
 app.add_middleware(CSRFMiddleware)
 
-# ── Include Routers (Versioned Prefix: /api/v1) ───────────────────
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(web_auth.router, prefix="/api/v1")
 app.include_router(plans.router, prefix="/api/v1")
 app.include_router(subscriptions.router, prefix="/api/v1")
 app.include_router(payments.router, prefix="/api/v1")
+app.include_router(payments_admin.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
-app.include_router(admin_settings.router, prefix="/api/v1/admin/settings", tags=["Admin Settings"])
+app.include_router(platform.public_router, prefix="/api/v1")
+app.include_router(platform.admin_router, prefix="/api/v1")
+app.include_router(ai_admin.router, prefix="/api/v1")
 
-# ═══════════════════════════════════════════════════════════════════
-# Health Check Endpoints
-# ═══════════════════════════════════════════════════════════════════
 
 @app.get("/health", tags=["Health"])
 async def health_check():
@@ -268,7 +225,6 @@ async def detailed_health_check():
 
     all_healthy = True
 
-    # ── PostgreSQL ────────────────────────────────────────────────
     try:
         start = time.time()
         async with engine.begin() as conn:
@@ -286,10 +242,8 @@ async def detailed_health_check():
         }
         all_healthy = False
 
-    # ── Check table count ─────────────────────────────────────────
     # Removed for security (do not leak DB schema size)
 
-    # ── Redis ─────────────────────────────────────────────────────
     try:
         start = time.time()
         pong = await redis_client.ping()
@@ -305,35 +259,29 @@ async def detailed_health_check():
         }
         all_healthy = False
 
-    # ── Mistral API ───────────────────────────────────────────────
     try:
-        start = time.time()
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            response = await client.get(
-                "https://api.mistral.ai/v1/models",
-                headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}"}
-            )
-            latency_ms = round((time.time() - start) * 1000, 1)
+        from app.services.ai_providers import AIConfigError, AIProviderService
 
-            if response.status_code == 200:
-                results["services"]["mistral"] = {
-                    "status": "connected",
-                    "latency_ms": latency_ms,
-                }
-            else:
-                results["services"]["mistral"] = {
-                    "status": "error",
-                    "http_status": response.status_code,
-                }
-                all_healthy = False
+        async with async_session_factory() as session:
+            chat = await AIProviderService.get_default(session, redis_client, "chat")
+        results["services"]["ai"] = {
+            "status": "configured",
+            "provider": chat.provider_name,
+            "model": chat.model,
+        }
+    except AIConfigError as e:
+        results["services"]["ai"] = {
+            "status": "not_configured",
+            "detail": str(e),
+        }
+        all_healthy = False
     except Exception as e:
-        results["services"]["mistral"] = {
-            "status": "disconnected",
+        results["services"]["ai"] = {
+            "status": "error",
             "error": str(e),
         }
         all_healthy = False
 
-    # ── MinIO ─────────────────────────────────────────────────────
     try:
         start = time.time()
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -354,7 +302,6 @@ async def detailed_health_check():
         }
         all_healthy = False
 
-    # ── Celery Workers ────────────────────────────────────────────
     try:
         start = time.time()
         i = celery_app.control.inspect(timeout=1.0)
@@ -383,7 +330,6 @@ async def detailed_health_check():
         }
         all_healthy = False
 
-    # ── Overall status ────────────────────────────────────────────
     results["status"] = "healthy" if all_healthy else "degraded"
 
     return results

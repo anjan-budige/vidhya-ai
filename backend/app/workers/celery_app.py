@@ -1,12 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Celery Application                                 ║
-║  Task queues: pdf | quota | conversations | default              ║
-║  Beat schedule: daily quota reset, monthly quota reset,          ║
-║                 conversation cleanup sweep (every 30 min)        ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import os
 
 from celery import Celery
@@ -21,8 +12,8 @@ celery_app = Celery(
     backend=CELERY_RESULT_BACKEND,
     include=[
         "app.workers.pdf_ingest",
+        "app.workers.reindex_embeddings",
         "app.workers.quota_reset",
-        "app.workers.conversation_cleanup",
         "app.workers.conversation_summarizer",
         "app.workers.subscription_expiry",
     ],
@@ -45,7 +36,6 @@ celery_app.conf.update(
         "quota":         {"exchange": "quota",         "routing_key": "quota"},
         "conversations": {"exchange": "conversations", "routing_key": "conversations"},
     },
-    # ── Beat Periodic Schedule ────────────────────────────────────────────────
     beat_schedule={
         # Daily quota reset — runs at 00:00 UTC every day
         "reset-daily-quotas": {
@@ -64,12 +54,6 @@ celery_app.conf.update(
             "task": "vidhya.expire_subscriptions",
             "schedule": crontab(hour=0, minute=5),
             "options": {"queue": "quota"},
-        },
-        # Conversation cleanup sweep — every 30 minutes
-        "cleanup-conversations": {
-            "task": "vidhya.cleanup_conversations",
-            "schedule": crontab(minute="*/30"),
-            "options": {"queue": "conversations"},
         },
     },
 )

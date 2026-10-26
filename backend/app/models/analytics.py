@@ -26,7 +26,6 @@ class Analytics(Base, UUIDPrimaryKeyMixin):
         ),
     )
 
-    # ── Metric ────────────────────────────────────────────────────
     metric_name: Mapped[str] = mapped_column(
         String(100), nullable=False, index=True
     )  # e.g. "total_users", "revenue", "ai_queries", "avg_response_time"
@@ -35,13 +34,11 @@ class Analytics(Base, UUIDPrimaryKeyMixin):
         JSONB, default=dict, server_default="{}"
     )  # e.g. {"plan": "premium"}, {"model": "qwen:4b-instruct"}
 
-    # ── Period ────────────────────────────────────────────────────
     period_type: Mapped[str] = mapped_column(
         String(10), nullable=False
     )  # 'daily' | 'weekly' | 'monthly'
     period_date: Mapped[date] = mapped_column(Date, nullable=False)
 
-    # ── Timestamp ─────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )

@@ -20,7 +20,6 @@ export default function AdminAuditLogs() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   
-  // Pagination State
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const pageSize = 100;
@@ -53,7 +52,7 @@ export default function AdminAuditLogs() {
 
   const getResourceIcon = (type: string | null) => {
     switch (type) {
-      case 'user': return <User className="w-4 h-4 text-purple-500" />;
+      case 'user': return <User className="w-4 h-4 text-brand-500" />;
       case 'plan': return <Shield className="w-4 h-4 text-brand-500" />;
       case 'document': return <FileText className="w-4 h-4 text-amber-500" />;
       case 'subscription': return <Server className="w-4 h-4 text-green-500" />;
@@ -71,14 +70,13 @@ export default function AdminAuditLogs() {
 
   return (
     <div className="flex flex-col h-full max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500">
-      {/* Page Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <Shield className="w-6 h-6 text-brand-600" />
+          <h1 className="flex items-center gap-2 text-xl font-semibold text-ink">
+            <Shield className="h-5 w-5 text-brand-500" />
             Security Audit Logs
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="mt-1 text-sm text-muted">
             Immutable record of all administrative actions and system events.
           </p>
         </div>
@@ -104,7 +102,6 @@ export default function AdminAuditLogs() {
         </div>
       </div>
 
-      {/* Stats summary */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: 'Total Events', value: total, color: 'text-slate-800' },
@@ -119,7 +116,6 @@ export default function AdminAuditLogs() {
         ))}
       </div>
 
-      {/* Table */}
       <div className="glass-card overflow-visible">
         {loading ? (
           <div className="p-12 flex flex-col items-center justify-center text-slate-400">
@@ -157,7 +153,6 @@ export default function AdminAuditLogs() {
                 ) : (
                   filteredLogs.map((log) => (
                     <tr key={log.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      {/* Timestamp */}
                       <td className="py-4 px-6 whitespace-nowrap">
                         <div className="flex items-center gap-2 text-slate-500 text-sm">
                           <Clock className="w-3.5 h-3.5 shrink-0" />
@@ -172,7 +167,6 @@ export default function AdminAuditLogs() {
                         </div>
                       </td>
 
-                      {/* Admin */}
                       <td className="py-4 px-6 whitespace-nowrap">
                         {log.admin_username ? (
                           <div className="flex items-center gap-2">
@@ -186,14 +180,12 @@ export default function AdminAuditLogs() {
                         )}
                       </td>
 
-                      {/* Action Badge */}
                       <td className="py-4 px-6 whitespace-nowrap">
                         <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium border ${getActionBadge(log.action)}`}>
                           {log.action}
                         </span>
                       </td>
 
-                      {/* Resource */}
                       <td className="py-4 px-6 whitespace-nowrap">
                         <div className="flex items-center gap-2 text-sm">
                           {getResourceIcon(log.resource_type)}
@@ -206,7 +198,6 @@ export default function AdminAuditLogs() {
                         </div>
                       </td>
 
-                      {/* Details */}
                       <td className="py-4 px-6">
                         {log.details && Object.keys(log.details).length > 0 ? (
                           <pre className="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 overflow-x-auto max-w-[200px] font-mono">
@@ -217,7 +208,6 @@ export default function AdminAuditLogs() {
                         )}
                       </td>
 
-                      {/* IP */}
                       <td className="py-4 px-6 whitespace-nowrap text-slate-500 font-mono text-xs">
                         {log.ip_address || (
                           <span className="text-slate-400 italic">Internal</span>
@@ -229,7 +219,6 @@ export default function AdminAuditLogs() {
               </tbody>
             </table>
             
-            {/* Pagination Controls */}
             {total > pageSize && (
               <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-white">
                 <div className="text-sm text-slate-500">

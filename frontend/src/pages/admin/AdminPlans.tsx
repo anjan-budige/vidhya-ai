@@ -2,12 +2,17 @@ import { useState, useEffect } from 'react';
 import { CreditCard, Edit, Plus, Check, X, Save, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api';
+import FreeModeBanner from '../../components/admin/FreeModeBanner';
+import { usePlatformConfig } from '../../hooks/usePlatformConfig';
+import { Badge } from '../../components/ui/Badge';
 
 export default function AdminPlans() {
+  const { freeMode } = usePlatformConfig();
   const [plans, setPlans] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingPlan, setEditingPlan] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [aiDefaults, setAiDefaults] = useState<any>(null);
 
   const fetchPlans = async () => {
     try {
@@ -22,6 +27,10 @@ export default function AdminPlans() {
 
   useEffect(() => {
     fetchPlans();
+    api
+      .get('/admin/ai/defaults')
+      .then((res) => setAiDefaults(res.data))
+      .catch(() => {});
   }, []);
 
   const handleEditClick = (plan: any) => {
@@ -34,36 +43,53 @@ export default function AdminPlans() {
       name: '',
       price_inr: 0,
       validity_days: 30,
+      messages_per_day: 5,
       messages_per_month: 50,
       max_context_tokens: 2000,
       max_response_tokens: 512,
-      max_conversations: 10,
-      max_active_conversations: 2
+      max_sessions: 10
     });
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPlan) return;
-    
+
+    const contextTokens = parseInt(editingPlan.max_context_tokens);
+    const responseTokens = parseInt(editingPlan.max_response_tokens);
+    const window = aiDefaults?.chat?.context_window;
+    const maxOutput = aiDefaults?.chat?.max_output_tokens;
+
+    if (maxOutput && responseTokens > maxOutput) {
+      toast.error(
+        `Max output is ${maxOutput} tokens for ${aiDefaults.chat.model}. Lower the plan's output limit.`
+      );
+      return;
+    }
+
+    if (window && contextTokens + responseTokens + 128 > window) {
+      toast.error(
+        `Max input is ${Math.max(0, window - responseTokens - 128)} tokens for ${aiDefaults.chat.model} (${window} window).`
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
         display_name: editingPlan.display_name,
         price_inr: parseInt(editingPlan.price_inr),
+        messages_per_day: parseInt(editingPlan.messages_per_day),
         messages_per_month: parseInt(editingPlan.messages_per_month),
         max_context_tokens: parseInt(editingPlan.max_context_tokens),
         max_response_tokens: parseInt(editingPlan.max_response_tokens),
-        max_conversations: parseInt(editingPlan.max_conversations),
-        max_active_conversations: parseInt(editingPlan.max_active_conversations)
+        max_sessions: parseInt(editingPlan.max_sessions)
       };
 
       if (editingPlan.id) {
-        // Update existing
         await api.put(`/plans/${editingPlan.id}`, payload);
         toast.success('Plan updated successfully');
       } else {
-        // Create new
         await api.post('/plans/', {
           ...payload,
           name: editingPlan.name,
@@ -98,98 +124,145 @@ export default function AdminPlans() {
   };
 
   return (
-    <div className="flex flex-col h-full max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between mb-6">
+    <div className="mx-auto flex h-full max-w-7xl flex-col space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Subscription Plans</h1>
-          <p className="text-sm text-slate-500">Manage pricing tiers and limits.</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-brand-600">Monetization</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-ink">Subscription plans</h1>
+          <p className="mt-1 text-sm text-muted">
+            {freeMode
+              ? 'Free mode — the free plan applies to every user.'
+              : 'Pricing tiers, quotas and AI context limits.'}
+          </p>
         </div>
-        <button onClick={handleCreateClick} className="btn-primary flex items-center">
-          <Plus className="w-4 h-4 mr-2" /> Create New Plan
+        <button
+          onClick={handleCreateClick}
+          disabled={freeMode}
+          title={freeMode ? 'Plan creation is disabled in Free mode' : undefined}
+          className="btn-primary gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Plus className="h-4 w-4" /> Create plan
         </button>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center items-center h-64">
-          <div className="w-10 h-10 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin"></div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {plans.map((plan) => (
-            <div key={plan.id} className={`glass-card p-8 relative ${plan.name === 'pro' ? 'border-brand-500 shadow-md ring-1 ring-brand-500' : ''}`}>
-              {plan.name === 'pro' && (
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-brand-500 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-sm">
-                  Most Popular
-                </div>
-              )}
-              <div className="flex justify-between items-start mb-4">
-                <h2 className="text-xl font-bold text-slate-800">{plan.display_name}</h2>
-                <div className="p-2 bg-slate-50 rounded-lg text-slate-400">
-                  <CreditCard className="w-5 h-5" />
-                </div>
-              </div>
-              
-              <div className="mb-6">
-                <span className="text-4xl font-extrabold text-slate-900">₹{plan.price_inr}</span>
-                <span className="text-slate-500 font-medium">/{plan.validity_days} days</span>
-              </div>
-
-              <div className="space-y-3 mb-8">
-                <div className="flex items-center text-sm text-slate-600">
-                  <Check className="w-4 h-4 text-green-500 mr-3 shrink-0" />
-                  <span className="font-medium text-slate-800">{plan.messages_per_month === -1 ? 'Unlimited' : plan.messages_per_month}</span> &nbsp;Messages/month
-                </div>
-                <div className="flex items-center text-sm text-slate-600">
-                  <Check className="w-4 h-4 text-green-500 mr-3 shrink-0" />
-                  <span className="font-medium text-slate-800">{plan.max_response_tokens}</span> &nbsp;Max Output Tokens
-                </div>
-                <div className="flex items-center text-sm text-slate-600">
-                  <Check className="w-4 h-4 text-green-500 mr-3 shrink-0" />
-                  <span className="font-medium text-slate-800">{plan.max_conversations}</span> &nbsp;Total Conversations
-                </div>
-              </div>
-
-              <div className="flex space-x-3">
-                <button 
-                  onClick={() => handleEditClick(plan)}
-                  className="flex-1 py-2.5 rounded-xl border-2 border-slate-200 text-slate-600 font-medium hover:border-brand-500 hover:text-brand-600 transition-colors flex justify-center items-center"
-                >
-                  <Edit className="w-4 h-4 mr-2" /> Edit Plan
-                </button>
-                {plan.name !== 'free' && (
-                  <button 
-                    onClick={() => handleDeleteClick(plan)}
-                    className="p-2.5 rounded-xl border-2 border-slate-200 text-slate-400 hover:border-red-500 hover:text-red-500 hover:bg-red-50 transition-colors flex justify-center items-center"
-                    title="Delete Plan"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+      {aiDefaults?.chat && (
+        <div className="card flex flex-col gap-1 border-brand-100 bg-brand-50/40 p-4 text-xs sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-semibold text-ink">Active chat model: {aiDefaults.chat.model}</p>
+            <p className="text-muted">
+              Plans must fit inside {aiDefaults.chat.context_window.toLocaleString()} context and{' '}
+              {aiDefaults.chat.max_output_tokens.toLocaleString()} max output tokens.
+            </p>
+          </div>
+          <Badge tone="brand">model limits</Badge>
         </div>
       )}
 
-      {/* Edit Modal */}
+      {freeMode && <FreeModeBanner message="Free mode — plan creation is disabled." />}
+
+      {loading ? (
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-80 animate-pulse rounded-xl bg-surface" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {plans.map((plan) => {
+            const highlight = plan.name === 'pro' || plan.name === 'premium';
+            return (
+              <div
+                key={plan.id}
+                className={`card card-hover group relative overflow-hidden p-6 ${
+                  highlight ? 'ring-1 ring-brand-200' : ''
+                }`}
+              >
+                <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${highlight ? 'from-brand-400 to-brand-600' : 'from-line to-line'}`} />
+                {plan.name === 'pro' && (
+                  <span className="absolute right-4 top-4 rounded-full bg-brand-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-md shadow-brand-500/30">
+                    Popular
+                  </span>
+                )}
+                <div className="flex items-start gap-3">
+                  <span className={`flex h-11 w-11 items-center justify-center rounded-xl ring-1 ${highlight ? 'bg-brand-50 text-brand-600 ring-brand-100' : 'bg-canvas text-muted ring-line'}`}>
+                    <CreditCard className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <h2 className="text-base font-semibold text-ink">{plan.display_name}</h2>
+                    <p className="text-xs text-muted">{plan.name === 'free' ? 'Default tier' : `Billed every ${plan.validity_days} days`}</p>
+                  </div>
+                </div>
+
+                <div className="mt-5 flex items-end gap-1">
+                  <span className="text-3xl font-bold tracking-tight text-ink">₹{plan.price_inr}</span>
+                  <span className="pb-1 text-xs text-muted">/ {plan.validity_days} days</span>
+                </div>
+
+                <div className="mt-5 space-y-2.5 border-t border-line pt-4">
+                  {[
+                    `${plan.messages_per_day === -1 ? 'Unlimited' : plan.messages_per_day.toLocaleString()} messages / day`,
+                    `${plan.messages_per_month === -1 ? 'Unlimited' : plan.messages_per_month.toLocaleString()} messages / month`,
+                    `${plan.max_sessions === -1 ? 'Unlimited' : plan.max_sessions} saved sessions`,
+                    `${plan.max_context_tokens.toLocaleString()} input · ${plan.max_response_tokens.toLocaleString()} output tokens`,
+                  ].map((feature) => (
+                    <div key={feature} className="flex items-center gap-2 text-xs text-muted">
+                      <Check className="h-3.5 w-3.5 shrink-0 text-success" />
+                      <span>{feature}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {aiDefaults?.chat &&
+                  (plan.max_response_tokens > aiDefaults.chat.max_output_tokens ||
+                    plan.max_context_tokens + plan.max_response_tokens + 128 >
+                      aiDefaults.chat.context_window) && (
+                    <p className="mt-3 rounded-md bg-danger-soft px-2.5 py-1.5 text-[11px] font-medium text-danger">
+                      Exceeds the active chat model's limits — adjust this plan or the model.
+                    </p>
+                  )}
+
+                <div className="mt-5 flex gap-2">
+                  <button
+                    onClick={() => handleEditClick(plan)}
+                    disabled={freeMode && plan.name !== 'free'}
+                    className="btn-outline flex-1 gap-1.5 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Edit className="h-3.5 w-3.5" /> Edit
+                  </button>
+                  {plan.name !== 'free' && !freeMode && (
+                    <button
+                      onClick={() => handleDeleteClick(plan)}
+                      className="rounded-lg border border-line p-2 text-muted transition-colors hover:border-red-200 hover:bg-danger-soft hover:text-danger"
+                      title="Delete plan"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {editingPlan && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <h2 className="text-xl font-bold text-slate-800">{editingPlan.id ? `Edit ${editingPlan.display_name}` : 'Create New Plan'}</h2>
-              <button onClick={() => setEditingPlan(null)} className="text-slate-400 hover:text-slate-600">
+        <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-surface border border-line rounded-xl shadow-xl w-full max-w-lg overflow-y-auto max-h-[90vh]">
+            <div className="p-5 border-b border-line flex justify-between items-center">
+              <h2 className="text-lg font-semibold text-ink">{editingPlan.id ? `Edit ${editingPlan.display_name}` : 'Create New Plan'}</h2>
+              <button onClick={() => setEditingPlan(null)} className="text-muted hover:text-ink">
                 <X className="w-6 h-6" />
               </button>
             </div>
             
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Display Name</label>
+                <label className="input-label">Display Name</label>
                 <input 
                   type="text" 
                   value={editingPlan.display_name}
                   onChange={(e) => setEditingPlan({...editingPlan, display_name: e.target.value})}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                  className="input-field"
                   required
                 />
               </div>
@@ -197,23 +270,23 @@ export default function AdminPlans() {
               {!editingPlan.id && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Internal Name</label>
+                    <label className="input-label">Internal Name</label>
                     <input 
                       type="text" 
                       value={editingPlan.name}
                       onChange={(e) => setEditingPlan({...editingPlan, name: e.target.value.toLowerCase().replace(/[^a-z_]/g, '')})}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                      className="input-field"
                       placeholder="e.g. basic_plus"
                       required
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Validity (Days)</label>
+                    <label className="input-label">Validity (Days)</label>
                     <input 
                       type="number" 
                       value={editingPlan.validity_days}
                       onChange={(e) => setEditingPlan({...editingPlan, validity_days: e.target.value})}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                      className="input-field"
                       min="1"
                       required
                     />
@@ -222,99 +295,102 @@ export default function AdminPlans() {
               )}
               
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Price (INR)</label>
+                <label className="input-label">Price (INR)</label>
                 <input 
                   type="number" 
                   value={editingPlan.price_inr}
                   onChange={(e) => setEditingPlan({...editingPlan, price_inr: e.target.value})}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                  className="input-field"
                   min="0"
                   required
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Messages/Month</label>
+                  <label className="input-label">Messages/Day</label>
+                  <input
+                    type="number"
+                    value={editingPlan.messages_per_day}
+                    onChange={(e) => setEditingPlan({...editingPlan, messages_per_day: e.target.value})}
+                    className="input-field"
+                    min="-1"
+                    required
+                  />
+                  <p className="mt-1 text-xs text-muted">-1 for unlimited</p>
+                </div>
+
+                <div>
+                  <label className="input-label">Messages/Month</label>
                   <input 
                     type="number" 
                     value={editingPlan.messages_per_month}
                     onChange={(e) => setEditingPlan({...editingPlan, messages_per_month: e.target.value})}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                    className="input-field"
                     min="-1"
                     required
                   />
-                  <p className="text-xs text-slate-500 mt-1">-1 for unlimited</p>
+                  <p className="mt-1 text-xs text-muted">-1 for unlimited</p>
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Total Conversations</label>
+                  <label className="input-label">Max Sessions</label>
                   <input 
                     type="number" 
-                    value={editingPlan.max_conversations}
-                    onChange={(e) => setEditingPlan({...editingPlan, max_conversations: e.target.value})}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                    value={editingPlan.max_sessions}
+                    onChange={(e) => setEditingPlan({...editingPlan, max_sessions: e.target.value})}
+                    className="input-field"
                     min="-1"
                     required
                   />
-                  <p className="text-xs text-slate-500 mt-1">Lifetime limit (-1 for unlimited)</p>
+                  <p className="mt-1 text-xs text-muted">Saved chats per user (-1 for unlimited)</p>
                 </div>
               </div>
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Input Context Tokens</label>
+                  <label className="input-label">Input Context Tokens</label>
                   <input 
                     type="number" 
                     value={editingPlan.max_context_tokens || 2000}
                     onChange={(e) => setEditingPlan({...editingPlan, max_context_tokens: e.target.value})}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                    className="input-field"
                     min="500"
                     required
                   />
-                  <p className="text-xs text-slate-500 mt-1">Max tokens AI remembers from history.</p>
+                  <p className="mt-1 text-xs text-muted">
+                    Maximum input tokens sent to the model per request.
+                  </p>
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Max Output Tokens</label>
+                  <label className="input-label">Max Output Tokens</label>
                   <input 
                     type="number" 
                     value={editingPlan.max_response_tokens}
                     onChange={(e) => setEditingPlan({...editingPlan, max_response_tokens: e.target.value})}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                    className="input-field"
                     min="128"
                     required
                   />
-                  <p className="text-xs text-slate-500 mt-1">Max tokens AI can generate per reply.</p>
+                  <p className="mt-1 text-xs text-muted">Max tokens AI can generate per reply.</p>
                 </div>
               </div>
 
 
-              <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Max Active Conversations</label>
-                  <input 
-                    type="number" 
-                    value={editingPlan.max_active_conversations}
-                    onChange={(e) => setEditingPlan({...editingPlan, max_active_conversations: e.target.value})}
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
-                    min="1"
-                    required
-                  />
-                  <p className="text-xs text-slate-500 mt-1">Concurrent open threads allowed.</p>
-                </div>
 
               <div className="pt-4 flex justify-end space-x-3">
                 <button 
                   type="button"
                   onClick={() => setEditingPlan(null)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium transition-colors"
+                  className="btn-ghost"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit"
                   disabled={saving}
-                  className="btn-primary px-6 py-2 rounded-xl flex items-center"
+                  className="btn-primary flex items-center"
                 >
                   {saving ? (
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>

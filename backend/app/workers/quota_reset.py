@@ -1,13 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — Quota Reset Worker (Phase 5)                       ║
-║  Celery Beat tasks:                                              ║
-║    1. Daily quota reset  — runs at UTC midnight every day        ║
-║    2. Monthly quota reset — runs at UTC midnight on 1st of month ║
-║    Both tasks clear Redis quota keys AND sync DB usage_tracking  ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import logging
 import os
 from datetime import date, datetime, timezone, timedelta

@@ -1,372 +1,221 @@
 <div align="center">
-  <img src="vidhya.png" alt="Vidhya Bot Platform"/>
+  <img src="vidhya.png" alt="Vidhya AI"/>
 
-  <h1>Vidhya AI Bot Platform</h1>
+  <h1>Vidhya AI</h1>
 
-  <p><strong>A production-grade AI educational assistant with document-grounded answers</strong><br/>
-  Built on FastAPI · pgvector · Mistral AI · React · Celery · Docker</p>
+  <p><strong>A self-hosted AI knowledge system for every industry</strong><br/>
+  Source-grounded answers from an organisation's own documents, with web, Telegram and admin access.</p>
 
   <p>
     <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
-    <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white"/>
-    <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black"/>
-    <img src="https://img.shields.io/badge/PostgreSQL-pgvector-316192?style=for-the-badge&logo=postgresql&logoColor=white"/>
+    <img src="https://img.shields.io/badge/FastAPI-0.162-009688?style=for-the-badge&logo=fastapi&logoColor=white"/>
+    <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black"/>
+    <img src="https://img.shields.io/badge/PostgreSQL_18-pgvector-316192?style=for-the-badge&logo=postgresql&logoColor=white"/>
   </p>
   <p>
-    <img src="https://img.shields.io/badge/Redis-DD0031?style=for-the-badge&logo=redis&logoColor=white"/>
-    <img src="https://img.shields.io/badge/Docker-0db7ed?style=for-the-badge&logo=docker&logoColor=white"/>
-    <img src="https://img.shields.io/badge/Celery-37814A?style=for-the-badge&logo=celery&logoColor=white"/>
-    <img src="https://img.shields.io/badge/Mistral_AI-FF6B35?style=for-the-badge"/>
-    <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge"/>
+    <img src="https://img.shields.io/badge/Redis-8.6-DD0031?style=for-the-badge&logo=redis&logoColor=white"/>
+    <img src="https://img.shields.io/badge/Docker-Compose-0db7ed?style=for-the-badge&logo=docker&logoColor=white"/>
+    <img src="https://img.shields.io/badge/Celery-5.4-37814A?style=for-the-badge&logo=celery&logoColor=white"/>
+    <img src="https://img.shields.io/badge/Telegram-Aiogram-26A5E4?style=for-the-badge&logo=telegram&logoColor=white"/>
   </p>
 </div>
 
----
+## Overview
 
-## What is Vidhya?
+Vidhya AI turns an organisation's documents into a private answer system. Administrators publish source material once; users ask questions in a focused web workspace or through Telegram and receive answers grounded in that material.
 
-Vidhya is an **AI-powered educational assistant** that lets institutions or creators build a web app where users can **ask questions grounded in your own documents** — PDFs, course material, knowledge bases — rather than relying on hallucinated general knowledge.
+The system is not tied to a single industry. The same platform can serve education, manufacturing, healthcare, legal, support, public-sector or internal corporate knowledge.
 
-Think of it as your own private, subscription-gated **ChatGPT for your content**, running entirely on your infrastructure.
+Core capabilities:
 
-**What makes it different from just calling an AI API?**
+- Source-grounded retrieval through PostgreSQL and pgvector
+- Separate chat and embedding model configuration
+- Multiple AI providers, including custom OpenAI-compatible endpoints
+- Streaming web chat with saved conversations and citations
+- Telegram access linked to the same user account
+- Owner-defined subscription models, or completely free access
+- Five Indian payment gateways in demo, sandbox and production modes
+- Role-based administration, usage analytics and an audit trail
+- Fully containerised deployment on a local machine, VPS or private cloud
 
-- It reads and understands **your specific documents**, not the open internet
-- It runs a full **subscription and payments engine** (PhonePe), so you can monetize it
-- It comes with a standalone **React web dashboard** for both users and admins
-- Every component is **Dockerized, async, production-hardened**, and ready to deploy on a ₹500/month VPS
-
----
-
-## 🏗️ Architecture
-
-Vidhya is built as a strict **5-layer N-Tier system**, designed so that each layer can scale independently.
+## Architecture
 
 ```mermaid
 graph TD
-    A["🌐 React Web App\n(User + Admin Dashboard)"] --> C
-    B["🤖 Telegram Bot\n(Aiogram 3.x)"] --> C
-
-    C["⚡ FastAPI — API Layer\nREST · SSE Streaming · Middleware\nCSRF · Rate Limiting · Session Auth"]
-
-    C --> D["🧠 Service Layer\nAI + RAG Orchestrator\nSubscription Engine · Quota Engine\nPayment HMAC Verification"]
-
-    D --> E["🗄️ Data Layer\nPostgreSQL + pgvector\nRedis — Cache & Queues\nMinIO — S3 Object Store"]
-
-    D --> F["⚙️ Background Workers\nCelery + Redis\nPDF Chunking & Embedding\nQuota Reset · Subscription Expiry"]
+    A["React web app"] --> N["Nginx"]
+    B["Telegram bot"] --> API["FastAPI backend"]
+    N --> A
+    N --> API
+    API --> DB["PostgreSQL 18 + pgvector"]
+    API --> R["Redis sessions, quotas and rate limits"]
+    API --> S["Silo object storage"]
+    API --> W["Celery workers"]
+    W --> DB
+    W --> S
+    W --> AI["Chat and embedding providers"]
 ```
 
----
+## Answer pipeline
 
-## 🧠 Beyond RAG — What Actually Happens
+1. An administrator uploads a PDF from the admin console.
+2. The file is stored in Silo and a Celery job extracts its pages.
+3. Text is split into overlapping chunks and sent to the active embedding model.
+4. Vectors and source metadata are stored in pgvector.
+5. A user question is embedded with the same active model.
+6. Relevant chunks are retrieved within the subscription tier's context budget.
+7. Recent conversation history and the stored older summary are added.
+8. The selected chat model streams an answer over SSE.
+9. Messages, sources, token usage and quota counters are persisted.
 
-Standard "RAG" tutorials show you: *embed a doc → query → dump chunks into a prompt → call an LLM*. That's a prototype, not a product. Vidhya does considerably more:
+Changing the active embedding model triggers re-indexing. Documents embedded by an older model are not used for retrieval until they finish re-indexing.
 
-### 1. Per-Plan RAG Access Control
-Not every user gets vector search. RAG is a **plan feature** — checked at the service layer from the user's active subscription limits. Free-tier users get general AI; paid users get document-grounded answers. This lets you protect compute costs.
+## Application surfaces
 
-```python
-# From ai.py — RAG is conditionally enabled based on subscription plan
-features = limits.get("features", {})
-rag_enabled = features.get("rag_enabled", True)
+| Surface | Purpose |
+|---|---|
+| Public landing page | Product overview and entry points |
+| User workspace | Streaming chat, saved chats, subscription, Telegram key and profile |
+| Admin console | Knowledge base, AI providers, users, subscriptions, payments, analytics, audit and system status |
+| Telegram bot | Account linking and knowledge chat through the same backend |
+| Payment pages | Provider checkout and payment result pages |
 
-if rag_enabled:
-    chunks = await cls.retrieve_relevant_chunks(query_embedding, limit=5, db=db)
-```
+## Access and security
 
-### 2. Rolling Context Window (Token-Counted)
-Vidhya doesn't just dump the last N messages. It uses **tiktoken to count tokens precisely** and fills the context window up to the plan's limit — keeping conversation history coherent without blowing up the LLM's context length.
+- Passwords are hashed with Argon2id.
+- Web sessions are opaque, stored in Redis and delivered through HttpOnly cookies.
+- CSRF is enforced with a signed double-submit cookie.
+- Administrators can protect sign-in with TOTP.
+- Every sensitive state-changing browser request is checked server-side.
+- User API keys are SHA-256 hashed and shown only once.
+- API keys work only through the Telegram bot bridge, not raw browser or curl access.
+- Payment and AI provider credentials are encrypted at rest.
+- Webhooks are signature-verified, amount-checked and idempotent.
+- Rate limits are applied per account and trusted client address.
+- Only Nginx is publicly exposed; internal services bind to localhost or the private Docker network.
 
-```python
-# From ai.py — fills history up to token budget, oldest messages dropped first
-for msg in reversed(history_messages):
-    block = f"{msg.role.capitalize()}: {msg.content}\n"
-    block_tokens = count_tokens(block)
-    if history_token_count + block_tokens > max_context_tokens:
-        break
-    history_block = block + history_block
-    history_token_count += block_tokens
-```
+For production, serve the platform over HTTPS and enable secure session cookies.
 
-### 3. Cosine Similarity with pgvector (No External Vector DB)
-Vector search runs directly in PostgreSQL using the **pgvector extension** — no Pinecone, no Weaviate, no Qdrant. This keeps the stack simple, consistent, and transactional.
+## Subscription model
 
-```sql
--- Cosine distance <=> operator in pgvector
-SELECT chunk, (embedding <=> query_embedding) AS distance
-FROM document_chunks
-JOIN documents ON documents.id = document_chunks.document_id
-WHERE documents.is_active = true AND documents.status = 'processed'
-ORDER BY distance ASC
-LIMIT 5;
-```
+The platform owner defines the commercial model from the admin console:
 
-### 4. Asynchronous PDF Ingestion Pipeline
-Uploading a PDF doesn't block the API. It gets pushed to a **Celery queue** where a worker:
-- Extracts text page by page
-- Chunks into 500-token overlapping segments (50-token overlap for continuity)
-- Generates 1024-dimensional Mistral embeddings for each chunk
-- Stores them into pgvector with document metadata
+- Subscription price and access duration
+- Daily and monthly message allowances
+- Maximum saved conversations
+- Input context and response token ceilings
+- Model availability and document-grounding capability
 
-The API returns immediately. The UI polls status until ingestion completes.
+Billing can be switched off completely. In free mode, every account uses the free tier's allowances and checkout is disabled by the server.
 
-### 5. Prompt Injection Defense
-Every query passes through a **keyword blocklist** before touching the LLM — catching jailbreak attempts like `"ignore previous instructions"`, `"developer mode"`, `"you are now DAN"`.
+Supported gateways: **Razorpay, Cashfree, Paytm, PhonePe and PayU**, plus a local demo provider. Only one provider can be active per checkout environment.
 
-```python
-blocked_keywords = [
-    "ignore previous instructions", "system prompt", "bypass",
-    "developer mode", "jailbreak", "do anything now", ...
-]
-if any(keyword in query.lower() for keyword in blocked_keywords):
-    yield error_event("Request blocked due to security policy violation.")
-    return
-```
+## Tech stack
 
-### 6. Auto-Generated Conversation Titles
-When a new conversation starts, Vidhya fires a **background async task** to call the LLM and generate a concise 3-word title from the first message. No user effort. No placeholder "New Chat" labels.
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, TypeScript, Vite 8, Tailwind CSS 4, React Router 7 |
+| UI and motion | Lucide, Recharts, anime.js, React Markdown, KaTeX |
+| Backend | Python 3.12, FastAPI 0.162, Starlette 1.10, Uvicorn |
+| ORM and validation | SQLAlchemy 2 async, asyncpg, Pydantic 2 |
+| Database | PostgreSQL 18 with pgvector 0.8.7 |
+| Cache and queues | Redis 8.6 and Celery 5.4 |
+| Object storage | Silo S3-compatible storage |
+| Telegram | aiogram 3.31 |
+| Email | Resend |
+| Reverse proxy | Nginx 1.31 Alpine |
+| Deployment | Docker Compose |
 
----
+## Getting started
 
-## 🛡️ Production Security
+### Requirements
 
-Security wasn't bolted on afterwards — it was designed in from the start.
+- Docker Desktop or Docker Engine with Compose v2
+- A configured AI provider, added later from the admin console
+- A Resend account for transactional email
+- A Telegram bot token if Telegram access is required
 
-| Mechanism | Implementation |
-|-----------|---------------|
-| **Password Hashing** | Argon2id via `argon2-cffi` |
-| **Admin 2FA** | TOTP (RFC 6238) via `pyotp` |
-| **CSRF Protection** | Double-submit cookie pattern, custom middleware |
-| **Payment Webhooks** | PhonePe X-VERIFY SHA256 HMAC validation |
-| **Rate Limiting** | Redis sliding-window per IP/user, bypasses proxy spoofing |
-| **Session Management** | Redis-backed sessions, configurable expiry |
-| **IDOR Prevention** | Strict `user_id` ownership checks at ORM level |
-| **Prompt Injection** | Keyword blocklist + strict system prompt isolation |
-| **IP Extraction** | Nginx X-Forwarded-For with trusted proxy handling |
-
----
-
-## 🔄 Real-Time Streaming
-
-AI responses don't wait for the full answer — they **stream token-by-token** using **Server-Sent Events (SSE)**. The React frontend renders progressively. The user sees the AI "thinking" in real time.
-
-This is powered by FastAPI's `StreamingResponse` + an async generator that reads the Mistral streaming API and converts each token into an SSE event frame.
-
----
-
-## 💎 Subscription Engine
-
-A complete billing system is built in — not mocked, not TODOs.
-
-| Plan | Price | Msgs/Day | Msgs/Month | Active Convs | Context | RAG |
-|------|-------|----------|------------|--------------|---------|-----|
-| **Free** | ₹0 | 5 | 50 | 1 | 5 msgs | ❌ |
-| **Basic** | ₹99/mo | 30 | 500 | 2 | 10 msgs | ✅ |
-| **Premium** | ₹299/mo | 100 | 2,000 | 5 | 20 msgs | ✅ |
-| **Pro** | ₹599/mo | Unlimited | Unlimited | 10 | 50 msgs | ✅ |
-
-- Quotas enforced in real-time via Redis atomic counters
-- Quotas reset daily at midnight IST (Celery beat scheduler)
-- Subscriptions expire at 23:59:59 IST on the final day
-- Payment processed via **PhonePe** (UPI, cards, wallets)
-- Webhook-validated payment confirmation before plan activation
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) with Compose v2
-- ~2 GB free RAM (runs comfortably on a 2 GB VPS)
-- A Mistral AI API key (from [console.mistral.ai](https://console.mistral.ai))
-
-### 1. Clone & Configure
+### Configuration
 
 ```bash
-git clone https://github.com/anjan-budige/vidhya-ai.git
-cd vidhya-ai
-
-# Copy the template and fill in your values
 cp .env.example .env
-nano .env   # or open with your editor
 ```
 
-The minimum required keys to fill in:
+Fill in the required database, storage, encryption, session and admin values. Provider credentials are not stored in `.env`; they are entered in the admin console and encrypted in the database.
 
-```env
-MISTRAL_API_KEY=      # From console.mistral.ai
-POSTGRES_PASSWORD=    # Any strong password
-MINIO_ROOT_PASSWORD=  # Any strong password
-SECRET_KEY=           # Run: python -c "import secrets; print(secrets.token_hex(32))"
-CSRF_SECRET=          # Run: python -c "import secrets; print(secrets.token_hex(32))"
-ADMIN_DEFAULT_PASSWORD= # Your admin panel password
-```
-
-### 2. Launch Everything
+### Start the platform
 
 ```bash
-docker compose up -d
+docker compose up -d --build
+docker compose ps
 ```
 
-This starts 10 services: PostgreSQL, Redis, MinIO, backend API, Celery worker, Celery beat, Flower, React frontend, and Nginx — all wired together automatically.
+Open:
 
-### 3. Verify Health
+- Web application: `http://localhost`
+- Admin console: `http://localhost/admin/login`
+- Flower: `http://localhost:5555`
+- Silo console: `http://localhost:9001`
 
-```bash
-docker compose ps               # All containers should show "healthy" or "running"
-docker compose logs -f backend  # Watch startup logs
-```
+## Service map
 
-### 4. Access the Platform
+| Service | Responsibility |
+|---|---|
+| `nginx` | Public reverse proxy, security headers and rate limits |
+| `frontend` | Static React build served by Nginx |
+| `backend` | REST API, SSE streaming, authentication, admin APIs and webhooks |
+| `postgres` | Relational data and vector embeddings |
+| `redis` | Sessions, quotas, auth cache and Celery broker |
+| `silo` | Private object storage for uploaded documents |
+| `silo-init` | One-time bucket creation and private policy setup |
+| `bot` | Telegram polling and account-linked chat |
+| `worker` | PDF ingestion, embeddings, summaries, quota and analytics jobs |
+| `celery-beat` | Scheduled quota resets, subscription expiry and maintenance |
+| `flower` | Celery monitoring |
 
-| Interface | URL | Description |
-|-----------|-----|-------------|
-| **Web App + Admin** | http://localhost | React SPA (user & admin dashboard) |
-| **API Docs** | http://localhost/docs | FastAPI Swagger UI |
-| **Celery Monitor** | http://localhost:5555 | Flower task dashboard |
-| **MinIO Console** | http://localhost:9001 | S3 object storage UI |
+## Project layout
 
----
-
-## 📦 Project Structure
-
-```
+```text
 vidhya-ai/
-├── backend/                    # FastAPI application (Python 3.12)
+├── backend/
 │   ├── app/
-│   │   ├── config.py           # Pydantic-settings configuration
-│   │   ├── main.py             # App factory, startup, health check
-│   │   ├── models/             # SQLAlchemy ORM models (16 tables)
-│   │   │   ├── user.py
-│   │   │   ├── conversation.py
-│   │   │   ├── message.py
-│   │   │   ├── chunk.py        # pgvector document chunks
-│   │   │   ├── document.py
-│   │   │   ├── plan.py         # Subscription plan definitions
-│   │   │   ├── subscription.py
-│   │   │   ├── payment.py
-│   │   │   └── ai_query.py     # Performance audit log
-│   │   ├── routers/            # API route handlers (12 routers)
-│   │   │   ├── auth.py         # Session auth
-│   │   │   ├── ai.py           # SSE streaming chat endpoint
-│   │   │   ├── documents.py    # PDF upload & status
-│   │   │   ├── payments.py     # PhonePe initiation + webhook
-│   │   │   ├── subscriptions.py
-│   │   │   └── analytics.py    # Admin analytics
-│   │   ├── services/           # Business logic layer
-│   │   │   ├── ai.py           # RAG orchestrator + streaming
-│   │   │   ├── quota.py        # Redis quota engine
-│   │   │   ├── subscription.py # Plan activation + expiry
-│   │   │   └── conversation.py
-│   │   ├── middleware/
-│   │   │   ├── csrf.py         # Double-submit CSRF protection
-│   │   │   └── rate_limit.py   # Redis sliding-window rate limiting
-│   │   └── workers/
-│   │       ├── celery_app.py   # Celery application factory
-│   │       ├── pdf_ingest.py   # Async PDF chunking + embedding
-│   │       ├── quota_reset.py  # Daily quota reset
-│   │       └── subscription_expiry.py
-│   └── alembic/                # Database migration scripts
-│
-├── bot/                        # Telegram Bot (Aiogram 3.x)
-│
-├── frontend/                   # React + Vite + TypeScript
-│   └── src/
-│       ├── pages/
-│       │   ├── Landing.tsx     # Public landing page
-│       │   ├── user/           # User dashboard (chat, subscription, docs)
-│       │   └── admin/          # Admin panel (analytics, users, documents)
-│       └── components/
-│
+│   │   ├── models/          # SQLAlchemy models
+│   │   ├── routers/         # FastAPI routes
+│   │   ├── services/        # AI, auth, quota, payments, platform logic
+│   │   ├── middleware/      # CSRF and rate limiting
+│   │   ├── workers/         # Celery jobs
+│   │   └── utils/           # Crypto, email and internal authentication
+│   ├── requirements.txt
+│   └── Dockerfile
+├── bot/                     # aiogram Telegram bot
+├── frontend/
+│   ├── src/
+│   │   ├── pages/           # Landing, user and admin screens
+│   │   ├── components/      # Layouts and shared UI
+│   │   ├── contexts/        # User state
+│   │   └── lib/             # API and formatting helpers
+│   └── Dockerfile
 ├── infrastructure/
-│   ├── nginx/                  # Reverse proxy configuration
-│   └── postgres/               # DB init scripts (pgvector setup)
-│
-├── docker-compose.yml          # Full 10-service orchestration
-└── .env.example                # Configuration template
+│   ├── nginx/               # Reverse proxy and security policies
+│   └── postgres/            # Schema and database image
+├── docker-compose.yml
+└── .env.example
 ```
 
----
-
-## 🧰 Tech Stack Rationale
-
-| Technology | Why This Choice |
-|------------|----------------|
-| **FastAPI** | Native async, automatic OpenAPI docs, Python type safety |
-| **SQLAlchemy (async)** | Type-safe ORM with async session support for high concurrency |
-| **pgvector** | Vector similarity search inside Postgres — no separate vector DB to manage |
-| **Mistral AI** | Superior embedding quality per token; `mistral-small` is fast and cheap |
-| **Celery + Redis** | Proven, battle-tested async task queue; Redis doubles as rate-limit store |
-| **MinIO** | Self-hosted S3-compatible object storage; zero egress costs |
-| **React + Vite** | Fast builds, TypeScript |
-| **Argon2id** | Winner of Password Hashing Competition; resistant to GPU/ASIC attacks |
-| **Docker Compose** | Reproducible, single-command deployments across any Linux host |
-
----
-
-## 🛠️ Common Operations
+## Operations
 
 ```bash
-# Start everything
-docker compose up -d
-
-# Watch logs in real time
 docker compose logs -f backend
 docker compose logs -f worker
-
-# Rebuild after code changes
-docker compose up -d --build backend
-
-# Run database migrations
-docker compose exec backend alembic upgrade head
-
-# Connect to the database
-docker compose exec postgres psql -U vidhya -d vidhya_db
-
-# Restart Celery workers
-docker compose restart worker celery-beat
-
-# Full teardown (preserves data volumes)
+docker compose restart backend bot
+docker compose up -d --build
 docker compose down
-
-# ⚠️ Nuclear reset — deletes ALL data
-docker compose down -v
 ```
 
----
-
-## 📊 Performance Characteristics
-
-- **API response time**: < 50ms for non-AI endpoints (session, quota, subscription checks)
-- **Streaming latency**: First token delivered in ~800ms–1.5s (Mistral API dependent)
-- **PDF ingestion**: ~2–5 seconds per page (extraction + embedding + DB write)
-- **Vector search**: < 10ms for cosine similarity over thousands of chunks (pgvector HNSW index)
-- **Memory footprint**: Full stack runs in ~800MB RAM; comfortable on a 2GB VPS
-- **Concurrent users**: Limited by Mistral API rate limits, not the Vidhya stack itself
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Multi-language support (Hindi, Kannada, Telugu)
-- [ ] OpenAI / Ollama as alternative LLM backends
-- [ ] Document versioning (upload newer versions, preserve embeddings)
-- [ ] Razorpay as alternative payment gateway
-- [ ] Admin analytics export (CSV / PDF)
-- [ ] Webhook-based event system for external integrations
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome. Please:
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Follow existing code patterns (async services, pydantic settings)
-4. Open a Pull Request with a clear description
+Database schema changes are applied through `infrastructure/postgres/init.sql`.
 
 ---
 
 <div align="center">
-  <p>Built by <strong>Anjan Budige</strong></p>
+  <p>Built and maintained by <strong>Anjan Budige</strong>.</p>
+  <p>Copyright © 2026 Anjan Budige. All rights reserved.</p>
 </div>

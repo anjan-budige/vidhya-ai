@@ -20,7 +20,6 @@ from app.models.base import UUIDPrimaryKeyMixin
 class AuditLog(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "audit_logs"
 
-    # ── Who ───────────────────────────────────────────────────────
     admin_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("admins.id"),
@@ -28,7 +27,6 @@ class AuditLog(Base, UUIDPrimaryKeyMixin):
         index=True,
     )
 
-    # ── What ──────────────────────────────────────────────────────
     action: Mapped[str] = mapped_column(
         String(100), nullable=False, index=True
     )  # e.g. "plan.created", "user.banned", "document.uploaded"
@@ -40,11 +38,9 @@ class AuditLog(Base, UUIDPrimaryKeyMixin):
     )
     details: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
-    # ── Context ───────────────────────────────────────────────────
     ip_address: Mapped[Optional[str]] = mapped_column(INET, nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # ── Timestamp (immutable — no updated_at) ─────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False, index=True
     )

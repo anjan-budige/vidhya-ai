@@ -1,153 +1,368 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
-import { 
-  LayoutDashboard, 
-  Database, 
-  Settings, 
-  LogOut, 
-  CreditCard,
-  Users,
-  IndianRupee,
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import {
   Activity,
+  BookOpenCheck,
+  ChevronDown,
+  Cpu,
+  CreditCard,
+  Database,
+  ExternalLink,
+  IndianRupee,
+  LayoutDashboard,
+  LogOut,
   Menu,
-  X,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Settings,
   Shield,
-  Settings2
+  Users,
+  X,
 } from 'lucide-react';
 import api from '../../api';
+import { LogoLockup, LogoMark } from '../brand/Logo';
+import { cn } from '../../lib/cn';
+
+const navGroups = [
+  {
+    label: 'Overview',
+    items: [
+      { name: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
+      { name: 'System Status', path: '/admin/system-status', icon: Activity },
+    ],
+  },
+  {
+    label: 'Workspace',
+    items: [
+      { name: 'Knowledge Base', path: '/admin/knowledge-base', icon: Database },
+      { name: 'AI Providers', path: '/admin/ai-providers', icon: Cpu },
+    ],
+  },
+  {
+    label: 'Monetization',
+    items: [
+      { name: 'Plans', path: '/admin/plans', icon: CreditCard },
+      { name: 'Payments', path: '/admin/payments', icon: IndianRupee },
+    ],
+  },
+  {
+    label: 'People',
+    items: [{ name: 'Users', path: '/admin/users', icon: Users }],
+  },
+  {
+    label: 'System',
+    items: [
+      { name: 'Audit Logs', path: '/admin/audit-logs', icon: Shield },
+      { name: 'Settings', path: '/admin/settings', icon: Settings },
+    ],
+  },
+];
+
+const flatNav = navGroups.flatMap((group) => group.items);
 
 export default function AdminLayout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem('vidhya.sidebar') === 'mini'
+  );
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const activeItem = flatNav.find((item) => location.pathname.startsWith(item.path));
+  const pageTitle = activeItem?.name ?? 'Admin Console';
 
   useEffect(() => {
-    // Listen for unauthorized events to force logout
     const handleUnauthorized = () => navigate('/admin/login');
     window.addEventListener('auth:unauthorized', handleUnauthorized);
 
-    // Initial check (ping a protected admin endpoint)
-    api.get('/analytics/dashboard')
+    api
+      .get('/analytics/dashboard')
       .then(() => setCheckingAuth(false))
       .catch(() => navigate('/admin/login'));
 
     return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
   }, [navigate]);
 
+  useEffect(() => {
+    localStorage.setItem('vidhya.sidebar', collapsed ? 'mini' : 'full');
+  }, [collapsed]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+        setQuery('');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const handleLogout = async () => {
     try {
       await api.post('/auth/logout');
-    } catch (e) {}
+    } catch {
+      // The UI still returns to login if the request fails.
+    }
     navigate('/admin/login');
   };
 
+  const results = query
+    ? flatNav.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()))
+    : [];
+
   if (checkingAuth) {
     return (
-      <div className="min-h-screen bg-[#f4f7fa] flex">
-        {/* Skeleton Sidebar */}
-        <aside className="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col fixed h-full z-10 p-4 shadow-sm">
-          <div className="flex items-center mb-8 p-2">
-            <div className="w-8 h-8 rounded-lg bg-slate-200 animate-pulse mr-3"></div>
-            <div className="w-32 h-6 bg-slate-200 rounded-md animate-pulse"></div>
+      <div className="flex min-h-screen bg-canvas">
+        <aside className="hidden w-[260px] shrink-0 border-r border-line bg-surface p-4 md:block">
+          <div className="mb-8 flex items-center gap-3">
+            <div className="h-8 w-8 animate-pulse rounded-lg bg-line" />
+            <div className="h-4 w-28 animate-pulse rounded bg-line" />
           </div>
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="flex items-center p-3 mb-2">
-              <div className="w-5 h-5 bg-slate-200 rounded animate-pulse mr-3"></div>
-              <div className="w-24 h-4 bg-slate-200 rounded animate-pulse"></div>
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="mb-2 flex items-center gap-3 rounded-lg p-3">
+              <div className="h-4 w-4 animate-pulse rounded bg-line" />
+              <div className="h-3.5 w-24 animate-pulse rounded bg-line" />
             </div>
           ))}
         </aside>
-        {/* Skeleton Main Content */}
-        <main className="flex-1 md:ml-64 p-4 md:p-8">
-          <div className="w-48 h-8 bg-slate-200 rounded-md animate-pulse mb-8"></div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 h-64 bg-white rounded-2xl border border-slate-100 shadow-sm animate-pulse"></div>
-            <div className="lg:col-span-1 h-64 bg-white rounded-2xl border border-slate-100 shadow-sm animate-pulse"></div>
+        <main className="flex-1 p-6">
+          <div className="mb-6 h-7 w-48 animate-pulse rounded bg-line" />
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-32 animate-pulse rounded-xl bg-surface" />
+            ))}
           </div>
         </main>
       </div>
     );
   }
 
-  const navItems = [
-    { name: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
-    { name: 'System Status', path: '/admin/system-status', icon: Activity },
-    { name: 'Knowledge Base', path: '/admin/knowledge-base', icon: Database },
-    { name: 'Users', path: '/admin/users', icon: Users },
-    { name: 'Plans', path: '/admin/plans', icon: CreditCard },
-    { name: 'Payments', path: '/admin/payments', icon: IndianRupee },
-    { name: 'Audit Logs', path: '/admin/audit-logs', icon: Shield },
-    { name: 'API Settings', path: '/admin/api-settings', icon: Settings2 },
-    { name: 'Settings', path: '/admin/settings', icon: Settings },
-  ];
-
   return (
-    <div className="min-h-screen bg-slate-50 font-sans flex">
-      {/* Mobile Topbar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white/70 backdrop-blur-xl border-b border-white/20 z-20 flex items-center justify-between px-4 shadow-sm">
-        <div className="flex items-center">
-          <div className="w-8 h-8 bg-gradient-to-br from-brand-500 to-purple-600 rounded-xl mr-3 flex items-center justify-center shadow-lg text-white font-bold">V</div>
-          <span className="font-bold text-lg text-slate-800 tracking-tight">Vidhya Hub</span>
-        </div>
-        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-600">
-          {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
-      </div>
-
-      {/* Mobile Sidebar Overlay */}
-      {isSidebarOpen && (
-        <div 
-          className="md:hidden fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-30"
-          onClick={() => setIsSidebarOpen(false)}
+    <div className="min-h-screen bg-canvas">
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-ink/40 backdrop-blur-sm md:hidden"
+          onClick={() => setMobileOpen(false)}
         />
       )}
 
-      {/* Sidebar */}
-      <aside className={`fixed md:sticky top-0 h-screen w-64 bg-white/60 backdrop-blur-2xl border-r border-white/40 flex flex-col z-40 shadow-xl md:shadow-glass transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
-        <div className="p-6 border-b border-slate-200/50 flex items-center justify-between md:justify-start">
-          <div className="w-8 h-8 bg-gradient-to-br from-brand-500 to-purple-600 rounded-xl mr-3 flex items-center justify-center shadow-lg text-white font-bold text-lg">
-            V
-          </div>
-          <span className="font-bold text-xl text-slate-800 tracking-tight">Vidhya Admin</span>
-          <button className="md:hidden text-slate-500" onClick={() => setIsSidebarOpen(false)}>
-            <X size={20} />
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 flex w-[260px] flex-col border-r border-line bg-surface transition-all duration-200',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          'md:translate-x-0',
+          collapsed ? 'md:w-[72px]' : 'md:w-[260px]'
+        )}
+      >
+        <div className="flex h-[64px] shrink-0 items-center border-b border-line px-4">
+          {collapsed ? (
+            <LogoMark size={30} className="mx-auto hidden md:block" />
+          ) : (
+            <LogoLockup markSize={30} className="hidden md:inline-flex" />
+          )}
+          <LogoLockup markSize={30} className="md:hidden" />
+          <button
+            className="ml-auto rounded-lg p-1.5 text-muted hover:bg-canvas hover:text-ink md:hidden"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Close menu"
+          >
+            <X className="h-5 w-5" />
           </button>
         </div>
-        
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.name}
-              to={item.path}
-              className={({ isActive }) =>
-                `flex items-center px-4 py-3 text-sm font-semibold rounded-xl transition-all duration-300 ${
-                  isActive 
-                    ? 'bg-gradient-to-r from-brand-50 to-purple-50 text-brand-700 shadow-sm border border-brand-100/50' 
-                    : 'text-slate-500 hover:bg-white/60 hover:text-slate-800 hover:shadow-sm'
-                }`
-              }
-            >
-              <item.icon className="mr-3 h-5 w-5" />
-              {item.name}
-            </NavLink>
+
+        <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
+          {navGroups.map((group) => (
+            <div key={group.label}>
+              {!collapsed && (
+                <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/70">
+                  {group.label}
+                </p>
+              )}
+              <div className="space-y-1">
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.name}
+                    to={item.path}
+                    title={collapsed ? item.name : undefined}
+                    onClick={() => setMobileOpen(false)}
+                    className={({ isActive }) =>
+                      cn(
+                        'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all',
+                        collapsed && 'md:justify-center md:px-0',
+                        isActive
+                          ? 'bg-gradient-to-r from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/25'
+                          : 'text-muted hover:bg-canvas hover:text-ink'
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <item.icon
+                          className={cn(
+                            'h-[18px] w-[18px] shrink-0 transition-transform group-hover:scale-105',
+                            isActive ? 'text-white' : 'text-muted group-hover:text-brand-500'
+                          )}
+                        />
+                        <span className={cn('truncate', collapsed && 'md:hidden')}>
+                          {item.name}
+                        </span>
+                        {isActive && !collapsed && (
+                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-white/80" />
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-200/50">
+        <div className="border-t border-line p-3">
+          {!collapsed && (
+            <div className="mb-3 rounded-xl border border-line bg-gradient-to-br from-brand-50 to-surface p-3">
+              <div className="flex items-center gap-2 text-xs font-semibold text-brand-700">
+                <BookOpenCheck className="h-3.5 w-3.5" /> Vidhya AI v3
+              </div>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                AI knowledge platform
+              </p>
+            </div>
+          )}
           <button
             onClick={handleLogout}
-            className="flex w-full items-center px-4 py-3 text-sm font-semibold text-slate-500 rounded-xl hover:bg-red-50 hover:text-red-600 hover:shadow-sm transition-all duration-300"
+            title={collapsed ? 'Sign out' : undefined}
+            className={cn(
+              'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted transition-colors hover:bg-danger-soft hover:text-danger',
+              collapsed && 'md:justify-center md:px-0'
+            )}
           >
-            <LogOut className="mr-3 h-5 w-5" />
-            Sign Out
+            <LogOut className="h-[18px] w-[18px] shrink-0" />
+            <span className={cn(collapsed && 'md:hidden')}>Sign out</span>
           </button>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 w-full md:w-auto md:ml-0 p-4 md:p-8 pt-20 md:pt-8 overflow-x-hidden">
-        <Outlet />
-      </main>
+      <div
+        className={cn(
+          'min-h-screen transition-[padding] duration-200',
+          collapsed ? 'md:pl-[72px]' : 'md:pl-[260px]'
+        )}
+      >
+        <header className="sticky top-0 z-20 flex h-[64px] items-center gap-3 border-b border-line bg-surface/90 px-4 backdrop-blur md:px-6">
+          <button
+            className="rounded-lg p-1.5 text-muted hover:bg-canvas hover:text-ink md:hidden"
+            onClick={() => setMobileOpen(true)}
+            aria-label="Open menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+
+          <button
+            className="hidden rounded-lg p-1.5 text-muted hover:bg-canvas hover:text-ink md:inline-flex"
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="h-[18px] w-[18px]" />
+            ) : (
+              <PanelLeftClose className="h-[18px] w-[18px]" />
+            )}
+          </button>
+
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium text-muted">Admin / {pageTitle}</p>
+            <h2 className="truncate text-sm font-semibold text-ink">{pageTitle}</h2>
+          </div>
+
+          <div className="relative ml-auto hidden lg:block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search pages…"
+              className="input-field h-9 w-56 rounded-lg pl-9 pr-12 text-xs"
+            />
+            <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-line bg-canvas px-1.5 py-0.5 text-[10px] text-muted">
+              Ctrl K
+            </kbd>
+            {results.length > 0 && (
+              <div className="absolute right-0 top-11 w-full overflow-hidden rounded-xl border border-line bg-surface shadow-xl">
+                {results.map((item) => (
+                  <button
+                    key={item.path}
+                    onClick={() => {
+                      navigate(item.path);
+                      setQuery('');
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink hover:bg-canvas"
+                  >
+                    <item.icon className="h-3.5 w-3.5 text-muted" /> {item.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <span className="hidden items-center gap-1.5 rounded-full border border-green-200 bg-success-soft px-2.5 py-1 text-[11px] font-semibold text-success sm:inline-flex">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" /> Live
+          </span>
+
+          <div className="relative">
+            <button
+              onClick={() => setMenuOpen((v) => !v)}
+              className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-canvas"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-semibold text-white shadow-md shadow-brand-500/30">
+                A
+              </span>
+              <span className="hidden text-left md:block">
+                <span className="block text-xs font-semibold leading-tight text-ink">Administrator</span>
+                <span className="block text-[10px] leading-tight text-muted">Superadmin</span>
+              </span>
+              <ChevronDown className="hidden h-3.5 w-3.5 text-muted md:block" />
+            </button>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+                <div className="absolute right-0 top-12 z-40 w-48 overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-xl">
+                  <a
+                    href="/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-muted hover:bg-canvas hover:text-ink"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" /> View site
+                  </a>
+                  <button
+                    onClick={handleLogout}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-danger hover:bg-danger-soft"
+                  >
+                    <LogOut className="h-3.5 w-3.5" /> Sign out
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </header>
+
+        <main className="page-shell min-h-[calc(100vh-64px)] p-4 md:p-6">
+          <div className="animate-rise">
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

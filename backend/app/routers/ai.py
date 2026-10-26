@@ -1,11 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║  VIDHYA BOT — AI Router                                          ║
-║  Provides: SSE chat completion stream events, active quota checks ║
-║  and audit query historical lists.                               ║
-╚══════════════════════════════════════════════════════════════════╝
-"""
-
 import json
 from typing import List
 
@@ -48,56 +40,34 @@ async def ai_chat_stream(
     Submit user query to AI.
     Returns real-time token stream via Server-Sent Events (SSE).
     """
-    # 1. Resolve target conversation thread ID
+    # 1. Resolve the target session
     conversation_id = payload.conversation_id
     if not conversation_id:
-        # Fast path check for active threads
-        await ConversationService.run_lazy_timeout_check(current_user.id, db)
-        await db.commit()
-        
         result = await db.execute(
             select(Conversation)
             .where(Conversation.user_id == current_user.id)
-            .where(Conversation.status == "active")
+            .order_by(Conversation.last_activity_at.desc())
+            .limit(1)
         )
-        active_conv = result.scalar_one_or_none()
-        
-        if active_conv:
-            conversation_id = active_conv.id
+        latest = result.scalar_one_or_none()
+
+        if latest:
+            conversation_id = latest.id
         else:
-            # Auto-provision a new thread
             new_conv = await ConversationService.create_conversation(
                 user_id=current_user.id,
                 title=f"Chat {payload.message[:20]}...",
                 db=db,
-                redis=redis
+                redis=redis,
             )
             await db.commit()
             conversation_id = new_conv.id
-            
-    # Validate provided conversation_id to ensure it's still active
-    if payload.conversation_id:
-        from app.services.conversation import ConversationService
-        from datetime import datetime, timezone, timedelta
-        
+    else:
         conv = await ConversationService.get_conversation(conversation_id, db)
-        now = datetime.now(timezone.utc)
-        
-        if conv.status == "active":
-            timeout_limit = timedelta(minutes=conv.conversation_timeout_min)
-            if now - conv.last_activity_at > timeout_limit:
-                 conv.status = "timeout"
-                 conv.closed_at = now
-                 conv.auto_close_reason = "Idle inactivity timeout."
-                 await db.commit()
-                 raise HTTPException(
-                     status_code=status.HTTP_400_BAD_REQUEST,
-                     detail="Conversation timed out. Please start a new session."
-                 )
-        else:
+        if conv.user_id != current_user.id:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Conversation thread is closed."
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: unauthorized session owner.",
             )
             
     # 2. Return SSE response stream
@@ -131,19 +101,16 @@ async def get_my_ai_quota(
     Retrieve active user message and concurrent thread quotas.
     Calculates detailed balances.
     """
-    # Verify/load active subscription
     limits = await QuotaService.get_active_subscription_limits(current_user.id, db, redis)
     
-    # Check current period message usages
     allowed, details = await QuotaService.check_quota(current_user.id, "messages", 1, db, redis)
     
-    # Fetch total concurrent active conversations
     conv_result = await db.execute(
-        select(func.count(Conversation.id))
-        .where(Conversation.user_id == current_user.id)
-        .where(Conversation.status == "active")
+        select(func.count(Conversation.id)).where(
+            Conversation.user_id == current_user.id
+        )
     )
-    active_threads_count = conv_result.scalar() or 0
+    sessions_used = conv_result.scalar() or 0
     
     return AIQuotaResponse(
         can_send=allowed,
@@ -153,8 +120,8 @@ async def get_my_ai_quota(
         monthly_messages_limit=limits.get("messages_per_month", 50),
         daily_remaining=details.get("daily_remaining", 0) if details.get("allowed") else details.get("remaining", 0),
         monthly_remaining=details.get("monthly_remaining", 0) if details.get("allowed") else details.get("remaining", 0),
-        active_conversations=active_threads_count,
-        max_active_conversations=limits.get("max_active_conversations", 1),
+        sessions_used=sessions_used,
+        max_sessions=limits.get("max_sessions", 5),
         plan_name=limits.get("plan_name", "free"),
         next_daily_reset=None  # Standard reset runs at UTC midnight, can be mapped from worker configs
     )

@@ -11,9 +11,6 @@ from typing import Any, Generic, List, Optional, TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Base Response Models
-# ═══════════════════════════════════════════════════════════════════
 
 class VidhyaBaseModel(BaseModel):
     """Base model with ORM mode enabled."""
@@ -33,9 +30,6 @@ class DetailedHealthResponse(HealthResponse):
     services: dict
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Pagination
-# ═══════════════════════════════════════════════════════════════════
 
 T = TypeVar("T")
 
@@ -70,9 +64,6 @@ class PaginationParams(BaseModel):
         return (self.page - 1) * self.page_size
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Error Responses
-# ═══════════════════════════════════════════════════════════════════
 
 class ErrorResponse(BaseModel):
     """Standard error response."""
@@ -92,9 +83,6 @@ class SubscriptionRequiredResponse(ErrorResponse):
     upgrade_url: str = "http://localhost/plans"
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Success Response
-# ═══════════════════════════════════════════════════════════════════
 
 class SuccessResponse(BaseModel):
     """Generic success response."""

@@ -15,30 +15,62 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             # Inject a CSRF cookie if it doesn't exist
             if "csrf_token" not in request.cookies:
-                csrf_token = secrets.token_urlsafe(32)
-                response.set_cookie(
-                    key="csrf_token",
-                    value=csrf_token,
-                    httponly=False,  # Must be readable by frontend JS
-                    secure=settings.SESSION_COOKIE_SECURE,
-                    samesite=settings.SESSION_COOKIE_SAMESITE,
-                    max_age=86400 * 7
+                already_set = any(
+                    "csrf_token=" in value
+                    for value in response.headers.getlist("set-cookie")
                 )
+                if not already_set:
+                    csrf_token = secrets.token_urlsafe(32)
+                    response.set_cookie(
+                        key="csrf_token",
+                        value=csrf_token,
+                        httponly=False,  # Must be readable by frontend JS
+                        secure=settings.SESSION_COOKIE_SECURE,
+                        samesite=settings.SESSION_COOKIE_SAMESITE,
+                        max_age=86400 * 7
+                    )
             return response
             
-        # 2. Check if request uses Bearer token auth (immune to CSRF)
+        # 2. Header-based credentials are immune to CSRF
         auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
+        if auth_header.startswith("Bearer ") or request.headers.get("X-API-Key"):
             return await call_next(request)
-            
+
         # 2.5 Bypass CSRF for specific endpoints (like login) where no session exists yet
         exempt_paths = [
-            "/api/v1/auth/admin/login", 
+            "/api/v1/auth/admin/login",
             "/api/v1/auth/admin/totp/verify",
-            "/api/v1/auth/telegram/login",
-            "/api/v1/payments/webhook"
+            "/api/v1/auth/admin/forgot-password",
+            "/api/v1/auth/admin/reset-password",
+            "/api/v1/auth/register",
+            "/api/v1/auth/verify-email",
+            "/api/v1/auth/resend-otp",
+            "/api/v1/auth/login",
+            "/api/v1/auth/login/verify-otp",
+            "/api/v1/auth/forgot-password",
+            "/api/v1/auth/reset-password",
         ]
         if request.url.path in exempt_paths:
+            # These cookie-issuing endpoints cannot require a pre-existing CSRF
+            # token, so reject cross-site browser origins explicitly.
+            origin = request.headers.get("origin")
+            if origin:
+                forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+                host = request.headers.get("host", request.url.netloc)
+                allowed = set(settings.CORS_ORIGINS)
+                allowed.add(settings.APP_URL.rstrip("/"))
+                allowed.add(f"{forwarded_proto}://{host}")
+                if origin.rstrip("/") not in allowed:
+                    return ORJSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "Origin is not allowed."},
+                    )
+            return await call_next(request)
+
+        if (
+            request.url.path.startswith("/api/v1/payments/webhook/")
+            or request.url.path.startswith("/api/v1/payments/return/")
+        ):
             return await call_next(request)
             
         # 3. For state-changing requests using Cookies, enforce CSRF
