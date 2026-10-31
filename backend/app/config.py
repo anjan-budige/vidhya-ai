@@ -98,6 +98,13 @@ class Settings(BaseSettings):
     # the question, and citing them reads as noise to the user.
     RAG_MIN_SCORE: float = 0.45
     RAG_TOP_K: int = 5
+    # A chunk is only cited when the finished answer is itself similar to it,
+    # which is what separates "used this passage" from "was vaguely nearby".
+    RAG_ANSWER_MIN_SCORE: float = 0.5
+    RAG_ANSWER_FALLBACK_SCORE: float = 0.65
+    # "grounded" cites only chunks the answer used; "inserted" cites every
+    # chunk that made it into the prompt.
+    RAG_CITATION_MODE: str = "grounded"
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -27,21 +26,17 @@ from app.services.quota import QuotaService
 settings = get_settings()
 logger = logging.getLogger("vidhya.ai")
 
-# Short social or meta turns carry no retrievable intent; running them through
-# vector search only produces near-random chunks for the citation badges.
-_SMALL_TALK_RE = re.compile(
-    r"^(?:"
-    r"hi+|hey+|hello+|hai|namaste|yo|"
-    r"good\s+(?:morning|afternoon|evening|night)|"
-    r"thanks?|thank\s+you|thx|ok(?:ay)?|cool|great|nice"
-    r")(?:[\s,]+(?:there|bot|vidhya|sir|ma'?am|madam))?[\s!.?,]*$"
-    r"|^(?:who\s+are\s+you|what(?:'s|\s+is)\s+your\s+name|"
-    r"which\s+(?:ai\s+)?model(?:\s+(?:are|r)\s+you(?:\s+using)?)?|"
-    r"what\s+model(?:\s+(?:are|r)\s+you(?:\s+using)?)?|"
-    r"who\s+(?:made|built|created)\s+you|what\s+can\s+you\s+do|"
-    r"how\s+are\s+you)[\s!.?,]*$",
-    re.IGNORECASE,
-)
+
+def _cosine(a: List[float], b: List[float]) -> float:
+    """Cosine similarity for two same-length vectors; 0.0 when incomparable."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if not norm_a or not norm_b:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 def count_tokens(text: str) -> int:
@@ -323,13 +318,14 @@ class AIService:
         # 3/4. RAG (only when enabled on the plan)
         features = limits.get("features", {})
         rag_enabled = features.get("rag_enabled", True)
-        is_small_talk = bool(_SMALL_TALK_RE.match(query.strip()))
 
         chunks: List[Tuple[DocumentChunk, float]] = []
         context_str = ""
-        retrieved_refs = []
+        retrieved_refs: List[Dict[str, Any]] = []
+        cited_chunks: List[Tuple[Dict[str, Any], DocumentChunk]] = []
+        embedding_config = None
 
-        if rag_enabled and not is_small_talk:
+        if rag_enabled:
             try:
                 embedding_config = await AIProviderService.get_default(
                     db, redis, "embedding"
@@ -368,12 +364,14 @@ class AIService:
                     page_key = (chunk.document_id, chunk.page_number)
                     if page_key not in cited_pages:
                         cited_pages.add(page_key)
-                        retrieved_refs.append({
+                        ref = {
                             "chunk_id": str(chunk.id),
                             "document_name": chunk.document.original_filename,
                             "page": chunk.page_number,
                             "score": float(1 - dist)  # Sim score
-                        })
+                        }
+                        retrieved_refs.append(ref)
+                        cited_chunks.append((ref, chunk))
                         
                 if ref_list:
                     context_str = "\n".join(ref_list)
@@ -389,7 +387,7 @@ class AIService:
             if chat_config.system_prompt
             else DEFAULT_SYSTEM_PROMPT
         )
-        if rag_enabled and not is_small_talk:
+        if rag_enabled:
             if context_str:
                 system_prompt += (
                     "\nUse the educational context below when it actually answers the "
@@ -477,6 +475,12 @@ class AIService:
             # so a stopped answer is still saved and counted.
             response_text = "".join(assistant_content)
             if response_text:
+                if (settings.RAG_CITATION_MODE or "grounded").lower() == "inserted":
+                    retrieved_refs = [ref for ref, _ in cited_chunks]
+                else:
+                    retrieved_refs = await cls.ground_refs(
+                        response_text, cited_chunks, embedding_config
+                    )
                 # Use provider-reported tokens if available, fallback to tiktoken
                 final_input_tokens = (
                     provider_input_tokens
@@ -530,6 +534,39 @@ class AIService:
             )
 
         yield f"event: done\ndata: {json.dumps({'status': 'completed'})}\n\n"
+
+    @classmethod
+    async def ground_refs(
+        cls,
+        answer: str,
+        cited: List[Tuple[Dict[str, Any], DocumentChunk]],
+        embedding_config: Optional[AIConfig],
+    ) -> List[Dict[str, Any]]:
+        """
+        Keep only the chunks the answer is actually grounded in. Retrieval
+        matches the question; this check compares the finished answer against
+        each chunk, so a badge only appears when the reply used that passage.
+        """
+        if not cited:
+            return []
+        if embedding_config is None:
+            return [ref for ref, _ in cited if ref["score"] >= settings.RAG_ANSWER_FALLBACK_SCORE]
+        try:
+            answer_vec = await AIProviderService.embed(embedding_config, answer[:4000])
+        except Exception as e:
+            logger.warning("Answer grounding check unavailable: %s", e)
+            return [ref for ref, _ in cited if ref["score"] >= settings.RAG_ANSWER_FALLBACK_SCORE]
+
+        grounded = []
+        for ref, chunk in cited:
+            vector = chunk.embedding
+            if vector is None:
+                continue
+            similarity = _cosine(answer_vec, [float(v) for v in vector])
+            if similarity >= settings.RAG_ANSWER_MIN_SCORE:
+                ref["grounding"] = round(similarity, 4)
+                grounded.append(ref)
+        return grounded
 
     @classmethod
     async def _finalize_exchange(
