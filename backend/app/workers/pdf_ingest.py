@@ -100,23 +100,39 @@ def ingest_document(document_id: str, force: bool = False, embedding_config=None
         try:
             s3 = get_s3_client()
             obj = s3.get_object(Bucket=doc.s3_bucket, Key=doc.s3_key)
-            pdf_bytes = obj["Body"].read()
+            file_bytes = obj["Body"].read()
 
-            reader = PdfReader(io.BytesIO(pdf_bytes))
-            total_pages = len(reader.pages)
+            extension = (
+                "." + doc.original_filename.rsplit(".", 1)[-1].lower()
+                if "." in doc.original_filename
+                else ""
+            )
             all_chunks = []
 
-            for page_idx, page in enumerate(reader.pages):
+            if extension == ".pdf":
+                reader = PdfReader(io.BytesIO(file_bytes))
+                total_pages = len(reader.pages)
+                for page_idx, page in enumerate(reader.pages):
+                    try:
+                        page_text = page.extract_text() or ""
+                        page_text = page_text.replace("\x00", "").replace("\0", "")
+                    except Exception:
+                        page_text = ""
+                    if page_text.strip():
+                        all_chunks.extend(chunk_text(page_text, page_idx + 1))
+            else:
+                # Plain-text family: no pagination, so everything is page 1.
+                total_pages = 1
                 try:
-                    page_text = page.extract_text() or ""
-                    page_text = page_text.replace("\x00", "").replace("\0", "")
-                except Exception:
-                    page_text = ""
-                if page_text.strip():
-                    all_chunks.extend(chunk_text(page_text, page_idx + 1))
+                    text = file_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = file_bytes.decode("latin-1")
+                text = text.replace("\x00", "")
+                if text.strip():
+                    all_chunks.extend(chunk_text(text, 1))
 
             if not all_chunks:
-                raise ValueError("PDF contained no extractable text")
+                raise ValueError("Document contained no extractable text")
 
             existing_indices = set()
             if force:

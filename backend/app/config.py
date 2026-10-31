@@ -88,9 +88,16 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD_PER_HOUR: int = 10
 
     MAX_UPLOAD_SIZE_MB: int = 100
-    ALLOWED_MIME_TYPES: str = "application/pdf"
+    ALLOWED_MIME_TYPES: str = (
+        "application/pdf,text/plain,text/markdown,text/csv,application/json"
+    )
     CHUNK_SIZE: int = 500  # tokens per chunk
     CHUNK_OVERLAP: int = 50  # overlap between chunks
+
+    # Cosine-similarity floor for retrieval. Chunks below this are unrelated to
+    # the question, and citing them reads as noise to the user.
+    RAG_MIN_SCORE: float = 0.45
+    RAG_TOP_K: int = 5
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

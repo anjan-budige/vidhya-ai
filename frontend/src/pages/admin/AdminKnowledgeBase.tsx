@@ -212,7 +212,7 @@ export default function AdminKnowledgeBase() {
           <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 flex flex-col items-center justify-center text-center bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer relative mt-2">
             <input 
               type="file" 
-              accept=".pdf,.txt" 
+              accept=".pdf,.txt,.md,.markdown,.csv,.json,.log" 
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               onChange={handleFileUpload}
               disabled={uploading}
@@ -227,8 +227,8 @@ export default function AdminKnowledgeBase() {
                 <div className="w-12 h-12 bg-brand-100 text-brand-600 rounded-full flex items-center justify-center mb-3">
                   <Upload className="w-6 h-6" />
                 </div>
-                <p className="font-medium text-slate-700 mb-1 text-sm">Select PDF to upload</p>
-                <p className="text-xs text-slate-500">Uses above metadata</p>
+                <p className="font-medium text-slate-700 mb-1 text-sm">Select a document to upload</p>
+                <p className="text-xs text-slate-500">PDF, TXT, MD, CSV, JSON, LOG</p>
               </>
             )}
           </div>
@@ -311,14 +311,14 @@ export default function AdminKnowledgeBase() {
                         <button 
                           onClick={() => handleDownload(file.id, file.original_filename || file.filename)}
                           className="text-slate-400 hover:text-brand-500 transition-colors"
-                          title="Download PDF"
+                          title="Download file"
                         >
                           <Download className="w-4 h-4 inline" />
                         </button>
                         <button 
                           onClick={() => handleDelete(file.id)}
                           className="text-slate-400 hover:text-red-500 transition-colors"
-                          title="Delete PDF"
+                          title="Delete file"
                         >
                           <Trash2 className="w-4 h-4 inline" />
                         </button>

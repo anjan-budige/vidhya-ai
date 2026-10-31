@@ -35,6 +35,28 @@ settings = get_settings()
 
 router = APIRouter(prefix="/documents", tags=["Admin Document Ingestion"])
 
+# Extension -> canonical type used for storage and for choosing the extractor.
+UPLOAD_TYPES = {
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".log": "text/plain",
+}
+TEXT_EXTENSIONS = {ext for ext, mime in UPLOAD_TYPES.items() if mime != "application/pdf"}
+
+
+def _is_text_payload(data: bytes) -> bool:
+    """Reject binary masquerading as text: no NUL bytes, few control chars."""
+    sample = data[:65536]
+    if b"\x00" in sample:
+        return False
+    control = sum(1 for b in sample if b < 9 or 13 < b < 32)
+    return control / max(1, len(sample)) < 0.05
+
+
 from botocore.config import Config
 
 # Initialize thread-safe boto3 s3 client singleton
@@ -50,7 +72,7 @@ s3_client = boto3.client(
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_pdf_document(
-    file: UploadFile = File(..., description="PDF document upload"),
+    file: UploadFile = File(..., description="PDF or plain-text document"),
     subject: Optional[str] = Form(None, description="Topic subject classification"),
     description: Optional[str] = Form(None, description="File description"),
     tags: Optional[str] = Form(None, description="Comma separated tags"),
@@ -58,19 +80,30 @@ async def upload_pdf_document(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Ingest a PDF document (Admin only).
+    Ingest a document (Admin only): PDF pages or a plain-text file.
     Stores raw files in MinIO and registers the record in PostgreSQL to trigger Celery indexing.
     """
     # 1. Validate file format and size
-    if not file.filename.lower().endswith(".pdf"):
+    extension = ("." + file.filename.rsplit(".", 1)[-1].lower()) if "." in file.filename else ""
+    if extension not in UPLOAD_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file format. Only PDF documents are allowed."
+            detail=(
+                "Unsupported file type. Allowed: "
+                + ", ".join(sorted(UPLOAD_TYPES))
+            )
         )
-        
+    content_type = UPLOAD_TYPES[extension]
+
     file_bytes = await file.read()
     file_size = len(file_bytes)
-    
+
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded file is empty."
+        )
+
     if file_size > settings.max_upload_size_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -79,11 +112,24 @@ async def upload_pdf_document(
         
     # 1.5 Deep MIME Magic Byte validation
     detected_mime = magic.from_buffer(file_bytes[:2048], mime=True)
-    if detected_mime != "application/pdf":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Security violation: File is not a valid PDF. Detected type: {detected_mime}"
-        )
+    if content_type == "application/pdf":
+        if detected_mime != "application/pdf":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Security violation: File is not a valid PDF. Detected type: {detected_mime}"
+            )
+    elif extension in TEXT_EXTENSIONS:
+        if not _is_text_payload(file_bytes):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Security violation: File is not plain text."
+            )
+        if detected_mime not in content_type and not detected_mime.startswith("text/"):
+            if detected_mime not in ("application/json", "application/octet-stream", "inode/x-empty"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Security violation: Unexpected content type {detected_mime}."
+                )
         
     # 2. Build S3 target Key
     doc_uuid = uuid.uuid4()
@@ -94,7 +140,7 @@ async def upload_pdf_document(
         re.sub(r"[^a-z0-9_-]+", "-", (subject or "").strip().lower()).strip("-")
         or "uncategorized"
     )
-    s3_key = f"subjects/{subject_folder}/{doc_uuid}-{sanitized_filename or 'document.pdf'}"
+    s3_key = f"subjects/{subject_folder}/{doc_uuid}-{sanitized_filename or f'document{extension}'}"
     
     # 3. Upload file stream directly to MinIO
     try:
@@ -102,7 +148,7 @@ async def upload_pdf_document(
             Bucket=settings.MINIO_BUCKET,
             Key=s3_key,
             Body=file_bytes,
-            ContentType="application/pdf"
+            ContentType=content_type
         )
     except Exception as e:
         import traceback
@@ -119,7 +165,7 @@ async def upload_pdf_document(
         filename=f"{doc_uuid}-{sanitized_filename}",
         original_filename=original_filename,
         file_size=file_size,
-        mime_type="application/pdf",
+        mime_type=content_type,
         s3_key=s3_key,
         s3_bucket=settings.MINIO_BUCKET,
         status="uploaded",
@@ -241,11 +287,11 @@ async def download_document(
         ))
         await db.commit()
         
-        fallback = re.sub(r'[^A-Za-z0-9._-]+', "_", doc.original_filename or "document.pdf")
-        encoded = quote(doc.original_filename or "document.pdf")
+        fallback = re.sub(r'[^A-Za-z0-9._-]+', "_", doc.original_filename or "document")
+        encoded = quote(doc.original_filename or "document")
         return StreamingResponse(
             s3_response["Body"],
-            media_type=doc.mime_type or "application/pdf",
+            media_type=doc.mime_type or "application/octet-stream",
             headers={
                 "Content-Disposition": (
                     f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}'

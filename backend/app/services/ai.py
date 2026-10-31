@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +26,22 @@ from app.services.quota import QuotaService
 
 settings = get_settings()
 logger = logging.getLogger("vidhya.ai")
+
+# Short social or meta turns carry no retrievable intent; running them through
+# vector search only produces near-random chunks for the citation badges.
+_SMALL_TALK_RE = re.compile(
+    r"^(?:"
+    r"hi+|hey+|hello+|hai|namaste|yo|"
+    r"good\s+(?:morning|afternoon|evening|night)|"
+    r"thanks?|thank\s+you|thx|ok(?:ay)?|cool|great|nice"
+    r")(?:[\s,]+(?:there|bot|vidhya|sir|ma'?am|madam))?[\s!.?,]*$"
+    r"|^(?:who\s+are\s+you|what(?:'s|\s+is)\s+your\s+name|"
+    r"which\s+(?:ai\s+)?model(?:\s+(?:are|r)\s+you(?:\s+using)?)?|"
+    r"what\s+model(?:\s+(?:are|r)\s+you(?:\s+using)?)?|"
+    r"who\s+(?:made|built|created)\s+you|what\s+can\s+you\s+do|"
+    r"how\s+are\s+you)[\s!.?,]*$",
+    re.IGNORECASE,
+)
 
 
 def count_tokens(text: str) -> int:
@@ -58,13 +75,16 @@ class AIService:
         limit: int,
         db: AsyncSession,
         model_id: Optional[str] = None,
+        min_score: float = 0.0,
     ) -> List[Tuple[DocumentChunk, float]]:
         """
         Perform a pgvector similarity search on DocumentChunk.
         Only chunks embedded by the active embedding model are eligible, so
-        vectors from different models are never compared.
+        vectors from different models are never compared. Chunks scoring below
+        min_score are dropped in SQL, so weak matches never reach the prompt
+        or the citation badges.
         """
-        # Cosine distance operator <=> in pgvector
+        # Cosine distance operator <=> in pgvector; similarity = 1 - distance
         distance = DocumentChunk.embedding.op("<=>", return_type=Float())(query_embedding).label("distance")
         
         stmt = (
@@ -76,6 +96,9 @@ class AIService:
             .order_by(distance.asc())
             .limit(limit)
         )
+
+        if min_score > 0:
+            stmt = stmt.where(distance <= 1 - min_score)
 
         if model_id:
             stmt = stmt.where(
@@ -300,12 +323,13 @@ class AIService:
         # 3/4. RAG (only when enabled on the plan)
         features = limits.get("features", {})
         rag_enabled = features.get("rag_enabled", True)
+        is_small_talk = bool(_SMALL_TALK_RE.match(query.strip()))
 
         chunks: List[Tuple[DocumentChunk, float]] = []
         context_str = ""
         retrieved_refs = []
 
-        if rag_enabled:
+        if rag_enabled and not is_small_talk:
             try:
                 embedding_config = await AIProviderService.get_default(
                     db, redis, "embedding"
@@ -313,9 +337,10 @@ class AIService:
                 query_embedding = await AIProviderService.embed(embedding_config, query)
                 chunks = await cls.retrieve_relevant_chunks(
                     query_embedding,
-                    limit=5,
+                    limit=settings.RAG_TOP_K,
                     db=db,
                     model_id=embedding_config.model_id,
+                    min_score=settings.RAG_MIN_SCORE,
                 )
             except Exception as e:
                 # No embedding provider yet: answer without documents instead of failing.
@@ -325,6 +350,7 @@ class AIService:
             
             if chunks:
                 ref_list = []
+                cited_pages = set()
                 rag_budget = max(200, int(effective_context_tokens * 0.35))
                 rag_used = 0
                 for i, (chunk, dist) in enumerate(chunks):
@@ -339,12 +365,15 @@ class AIService:
                         break
                     ref_list.append(f"Context chunk:\n{text}\n")
                     rag_used += chunk_tokens
-                    retrieved_refs.append({
-                        "chunk_id": str(chunk.id),
-                        "document_name": chunk.document.original_filename,
-                        "page": chunk.page_number,
-                        "score": float(1 - dist)  # Sim score
-                    })
+                    page_key = (chunk.document_id, chunk.page_number)
+                    if page_key not in cited_pages:
+                        cited_pages.add(page_key)
+                        retrieved_refs.append({
+                            "chunk_id": str(chunk.id),
+                            "document_name": chunk.document.original_filename,
+                            "page": chunk.page_number,
+                            "score": float(1 - dist)  # Sim score
+                        })
                         
                 if ref_list:
                     context_str = "\n".join(ref_list)
@@ -360,11 +389,12 @@ class AIService:
             if chat_config.system_prompt
             else DEFAULT_SYSTEM_PROMPT
         )
-        if rag_enabled:
+        if rag_enabled and not is_small_talk:
             if context_str:
                 system_prompt += (
-                    "\nFirst, try to answer using ONLY the educational context provided below. "
-                    "If the context does not contain the answer, you may use your own general knowledge to answer it seamlessly.\n\n"
+                    "\nUse the educational context below when it actually answers the "
+                    "question. If the context is unrelated, ignore it completely and "
+                    "answer from your own knowledge instead of forcing it in.\n\n"
                     "=== EDUCATIONAL CONTEXT ===\n"
                     f"{context_str}\n"
                     "============================\n"
