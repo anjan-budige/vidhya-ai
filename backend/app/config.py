@@ -94,14 +94,14 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 500  # tokens per chunk
     CHUNK_OVERLAP: int = 50  # overlap between chunks
 
-    # Cosine-similarity floor for retrieval. Chunks below this are unrelated to
-    # the question, and citing them reads as noise to the user.
-    RAG_MIN_SCORE: float = 0.45
+    # Calibrated against this deployment's embedding model: genuine matches land
+    # at 0.82+ and unrelated questions at ~0.63, so the floor sits between them.
+    RAG_MIN_SCORE: float = 0.70
     RAG_TOP_K: int = 5
     # A chunk is only cited when the finished answer is itself similar to it,
     # which is what separates "used this passage" from "was vaguely nearby".
-    RAG_ANSWER_MIN_SCORE: float = 0.5
-    RAG_ANSWER_FALLBACK_SCORE: float = 0.65
+    RAG_ANSWER_MIN_SCORE: float = 0.80
+    RAG_ANSWER_FALLBACK_SCORE: float = 0.80
     # "grounded" cites only chunks the answer used; "inserted" cites every
     # chunk that made it into the prompt.
     RAG_CITATION_MODE: str = "grounded"
